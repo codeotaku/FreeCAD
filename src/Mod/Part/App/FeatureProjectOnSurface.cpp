@@ -336,7 +336,7 @@ std::vector<TopoDS_Shape> ProjectOnSurface::createProjectedWire(
             TopoDS_Wire fixedWire = fixWire(projectedWire, supportFace);
             if (!fixedWire.IsNull()) {
                 auto face = createFaceFromWire({fixedWire}, supportFace);
-                auto face_or_solid = createSolidIfHeight(face);
+                auto face_or_solid = createSolidIfHeight(face, dir);
                 if (!face_or_solid.IsNull()) {
                     return {face_or_solid};
                 }
