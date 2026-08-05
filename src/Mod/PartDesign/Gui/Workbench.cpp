@@ -447,6 +447,7 @@ Gui::MenuItem* Workbench::setupMenuBar() const
           << "Separator"
           << "PartDesign_ShapeBinder"
           << "PartDesign_SubShapeBinder"
+          << "PartDesign_ProjectOnSurface"
           << "PartDesign_Clone"
           << "Separator" << additives << "PartDesign_CompPrimitiveAdditive"
           << "Separator" << subtractives << "PartDesign_CompPrimitiveSubtractive"
@@ -496,6 +497,7 @@ Gui::ToolBarItem* Workbench::setupToolBars() const
           << "Sketcher_ValidateSketch"
           << "Part_CheckGeometry"
           << "PartDesign_SubShapeBinder"
+          << "PartDesign_ProjectOnSurface"
           << "PartDesign_Clone";
 
     part = new Gui::ToolBarItem(root);

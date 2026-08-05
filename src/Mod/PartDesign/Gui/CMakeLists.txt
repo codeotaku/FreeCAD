@@ -43,6 +43,7 @@ set(PartDesignGui_UIC_SRCS
     TaskScaledParameters.ui
     TaskMultiTransformParameters.ui
     TaskShapeBinder.ui
+    TaskProjectOnSurface.ui
     TaskPreviewParameters.ui
     TaskPrimitiveParameters.ui
     TaskPipeParameters.ui
@@ -119,6 +120,8 @@ SET(PartDesignGuiViewProvider_SRCS
     ViewProviderHelix.cpp
     ViewProviderBase.h
     ViewProviderBase.cpp
+    ViewProviderProjectOnSurface.h
+    ViewProviderProjectOnSurface.cpp
 )
 SOURCE_GROUP("ViewProvider" FILES ${PartDesignGuiViewProvider_SRCS})
 
@@ -181,6 +184,9 @@ SET(PartDesignGuiTaskDlgs_SRCS
     TaskShapeBinder.ui
     TaskShapeBinder.cpp
     TaskShapeBinder.h
+    TaskProjectOnSurface.ui
+    TaskProjectOnSurface.cpp
+    TaskProjectOnSurface.h
     TaskBooleanParameters.ui
     TaskBooleanParameters.cpp
     TaskBooleanParameters.h
