@@ -4215,11 +4215,55 @@ bool isValidFilletShape(const TopoDS_Shape& shape)
     return !shape.IsNull() && BRepCheck_Analyzer(shape).IsValid();
 }
 
+template<typename Builder>
+bool buildSimplifiedFilletBoolean(Builder& builder)
+{
+    builder.Build();
+    if (!builder.IsDone() || builder.Shape().IsNull()) {
+        return false;
+    }
+
+    builder.SimplifyResult(Standard_True, Standard_True, Precision::Angular());
+    return builder.IsDone() && !builder.Shape().IsNull();
+}
+
 bool isSingleSolid(const TopoShape& shape)
 {
     const TopAbs_ShapeEnum shapeType = shape.getShape().ShapeType();
     return shapeType == TopAbs_SOLID
         || (shapeType == TopAbs_COMPOUND && shape.countSubShapes(TopAbs_SOLID) == 1);
+}
+
+bool finalizeExactFillet(TopoShape& result, const TopoShape& candidate, const App::StringHasherRef& hasher)
+{
+    if (!isValidFilletShape(candidate.getShape()) || !isSingleSolid(candidate)) {
+        return false;
+    }
+
+    try {
+        TopoShape refineInput(0, hasher);
+        refineInput.makeElementCopy(candidate);
+        TopoShape refined(0, hasher);
+        refined.makeElementRefine(refineInput, Part::OpCodes::Refine, RefineFail::shapeUntouched);
+        if (isValidFilletShape(refined.getShape()) && isSingleSolid(refined)) {
+            const double candidateVolume = filletShapeVolume(candidate.getShape());
+            const double refinedVolume = filletShapeVolume(refined.getShape());
+            const double volumeTolerance = std::max({1.0, candidateVolume, refinedVolume})
+                * filletRelativeTolerance;
+            if (std::abs(candidateVolume - refinedVolume) <= volumeTolerance
+                && areSameSolid(candidate.getShape(), refined.getShape())) {
+                result = refined;
+                return true;
+            }
+        }
+    }
+    catch (...) {
+        // Refinement is optional cleanup. Preserve a valid exact fillet when
+        // the refiner cannot handle its tangent-limit topology.
+    }
+
+    result = candidate;
+    return true;
 }
 
 std::vector<FilletEndCap> findFilletEndCaps(
@@ -4266,7 +4310,8 @@ bool tryMakeHemisphereFillet(
     std::size_t mostSelectedEdges,
     double radius,
     double radiusTolerance,
-    const char* op
+    const char* op,
+    const App::StringHasherRef& hasher
 )
 {
     if (endCaps.size() != 1 || mostSelectedEdges != 1 || edges.size() != 1) {
@@ -4347,8 +4392,7 @@ bool tryMakeHemisphereFillet(
                 }
 
                 FCBRepAlgoAPI_Cut base(source.getShape(), localCylinder);
-                base.Build();
-                if (!base.IsDone()) {
+                if (!buildSimplifiedFilletBoolean(base)) {
                     continue;
                 }
 
@@ -4362,19 +4406,21 @@ bool tryMakeHemisphereFillet(
                     if (isValidFilletShape(hemisphere.Shape())
                         && std::abs(filletShapeVolume(hemisphere.Shape()) - expectedVolume)
                             <= volumeTolerance) {
-                        result.makeElementShape(hemisphere, source, op);
-                        return true;
+                        TopoShape candidate(0, hasher);
+                        candidate.makeElementShape(hemisphere, source, op);
+                        return finalizeExactFillet(result, candidate, hasher);
                     }
                     continue;
                 }
 
                 FCBRepAlgoAPI_Fuse exactFillet(base.Shape(), hemisphere.Shape());
-                exactFillet.Build();
-                if (exactFillet.IsDone() && isValidFilletShape(exactFillet.Shape())
+                if (buildSimplifiedFilletBoolean(exactFillet)
+                    && isValidFilletShape(exactFillet.Shape())
                     && std::abs(filletShapeVolume(exactFillet.Shape()) - expectedVolume)
                         <= volumeTolerance) {
-                    result.makeElementShape(exactFillet, source, op);
-                    return true;
+                    TopoShape candidate(0, hasher);
+                    candidate.makeElementShape(exactFillet, source, op);
+                    return finalizeExactFillet(result, candidate, hasher);
                 }
             }
             catch (const Standard_Failure&) {
@@ -4426,16 +4472,14 @@ TopoDS_Shape makeCircularEndRemoval(
         const TopoDS_Shape pipe
             = BRepPrimAPI_MakeTorus(gp_Ax2(middle, axis), spineRadius, radius).Shape();
         FCBRepAlgoAPI_Fuse envelope(core, pipe);
-        envelope.Build();
-        if (!envelope.IsDone()) {
+        if (!buildSimplifiedFilletBoolean(envelope)) {
             return {};
         }
 
         const TopoDS_Shape localCylinder
             = BRepPrimAPI_MakeCylinder(gp_Ax2(firstCenter, axis), edgeRadius, prismLength).Shape();
         FCBRepAlgoAPI_Cut removal(localCylinder, envelope.Shape());
-        removal.Build();
-        return removal.IsDone() ? removal.Shape() : TopoDS_Shape {};
+        return buildSimplifiedFilletBoolean(removal) ? removal.Shape() : TopoDS_Shape {};
     }
 
     if (!isOuterEdge) {
@@ -4445,8 +4489,7 @@ TopoDS_Shape makeCircularEndRemoval(
         const TopoDS_Shape pipe
             = BRepPrimAPI_MakeTorus(gp_Ax2(middle, axis), spineRadius, radius).Shape();
         FCBRepAlgoAPI_Cut removal(expandedCylinder, pipe);
-        removal.Build();
-        return removal.IsDone() ? removal.Shape() : TopoDS_Shape {};
+        return buildSimplifiedFilletBoolean(removal) ? removal.Shape() : TopoDS_Shape {};
     }
 
     return {};
@@ -4570,8 +4613,7 @@ TopoDS_Shape makeRectangularPocketRemoval(
         }
 
         FCBRepAlgoAPI_Fuse joinedPipes(pipes, pipe);
-        joinedPipes.Build();
-        if (!joinedPipes.IsDone()) {
+        if (!buildSimplifiedFilletBoolean(joinedPipes)) {
             return {};
         }
         pipes = joinedPipes.Shape();
@@ -4581,8 +4623,7 @@ TopoDS_Shape makeRectangularPocketRemoval(
     }
 
     FCBRepAlgoAPI_Cut removal(expandedPocket, pipes);
-    removal.Build();
-    return removal.IsDone() ? removal.Shape() : TopoDS_Shape {};
+    return buildSimplifiedFilletBoolean(removal) ? removal.Shape() : TopoDS_Shape {};
 }
 
 bool tryMakeOpposingEndFillet(
@@ -4592,7 +4633,8 @@ bool tryMakeOpposingEndFillet(
     const std::vector<FilletEndCap>& endCaps,
     std::size_t mostSelectedEdges,
     double radius,
-    const char* op
+    const char* op,
+    const App::StringHasherRef& hasher
 )
 {
     if (endCaps.size() != 2 || mostSelectedEdges * 2 != edges.size()
@@ -4641,12 +4683,12 @@ bool tryMakeOpposingEndFillet(
         }
 
         FCBRepAlgoAPI_Cut exactFillet(source.getShape(), removalTool);
-        exactFillet.Build();
-        if (!exactFillet.IsDone() || !isValidFilletShape(exactFillet.Shape())) {
+        if (!buildSimplifiedFilletBoolean(exactFillet) || !isValidFilletShape(exactFillet.Shape())) {
             return false;
         }
-        result.makeElementShape(exactFillet, source, op);
-        return true;
+        TopoShape candidate(0, hasher);
+        candidate.makeElementShape(exactFillet, source, op);
+        return finalizeExactFillet(result, candidate, hasher);
     }
     catch (const Standard_Failure&) {
         return false;
@@ -4858,8 +4900,7 @@ bool tryMakeLongitudinalFillet(
             continue;
         }
 
-        result = swept;
-        return true;
+        return finalizeExactFillet(result, swept, hasher);
     }
     return false;
 }
@@ -4891,14 +4932,24 @@ bool tryMakeExactLimitFillet(
     const auto endCaps = findFilletEndCaps(source, edges, mostSelectedEdges);
 
     // A single circular outer edge can consume a cylindrical wall and cap.
-    if (
-        tryMakeHemisphereFillet(result, source, edges, endCaps, mostSelectedEdges, radius1, radiusTolerance, op)
-    ) {
+    if (tryMakeHemisphereFillet(
+            result,
+            source,
+            edges,
+            endCaps,
+            mostSelectedEdges,
+            radius1,
+            radiusTolerance,
+            op,
+            hasher
+        )) {
         return true;
     }
 
     // Selected contours on both ends need a full-radius mid-plane removal.
-    if (tryMakeOpposingEndFillet(result, source, edges, endCaps, mostSelectedEdges, radius1, op)) {
+    if (
+        tryMakeOpposingEndFillet(result, source, edges, endCaps, mostSelectedEdges, radius1, op, hasher)
+    ) {
         return true;
     }
 

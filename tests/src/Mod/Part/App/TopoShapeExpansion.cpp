@@ -75,6 +75,17 @@ private:
     App::StringHasherRef _hasher;
 };
 
+void expectNoRedundantSameDomainTopology(const TopoShape& shape)
+{
+    const TopoShape refineInput = shape.makeElementCopy();
+    const TopoShape refined = refineInput.makeElementRefine(nullptr, RefineFail::shapeUntouched);
+    EXPECT_TRUE(BRepCheck_Analyzer(refined.getShape()).IsValid());
+    EXPECT_EQ(refined.getSubTopoShapes(TopAbs_SOLID).size(), 1U);
+    EXPECT_EQ(refined.getSubTopoShapes(TopAbs_FACE).size(), shape.getSubTopoShapes(TopAbs_FACE).size());
+    EXPECT_EQ(refined.getSubTopoShapes(TopAbs_EDGE).size(), shape.getSubTopoShapes(TopAbs_EDGE).size());
+    EXPECT_NEAR(getVolume(refined.getShape()), getVolume(shape.getShape()), 1e-9);
+}
+
 TEST_F(TopoShapeExpansionTest, makeElementCompoundOneShapeReturnsShape)
 {
     // Arrange
@@ -2480,6 +2491,7 @@ TEST_F(TopoShapeExpansionTest, makeElementFilletConsumesFaceAtExactLimit)
         }
     }
     EXPECT_EQ(horizontalFaces, 1);
+    expectNoRedundantSameDomainTopology(result);
 }
 
 TEST_F(TopoShapeExpansionTest, makeElementFilletRejectsRadiusBeyondFaceCollapse)
@@ -2675,7 +2687,8 @@ TEST_F(TopoShapeExpansionTest, makeElementFilletAllEdgesOfLPrismAtLimit)
     // Assert: adjoining radius-5 fillets meet without residual sliver faces.
     EXPECT_TRUE(BRepCheck_Analyzer(atLimit.getShape()).IsValid());
     EXPECT_NEAR(getVolume(atLimit.getShape()), 4925.847214064, 1e-6);
-    EXPECT_EQ(atLimit.getSubTopoShapes(TopAbs_EDGE).size(), 56U);
+    EXPECT_EQ(atLimit.getSubTopoShapes(TopAbs_EDGE).size(), 54U);
+    expectNoRedundantSameDomainTopology(atLimit);
 
     // A radius above the half-length of the shortest profile edges remains invalid.
     TopoShape aboveLimit;
@@ -2716,6 +2729,7 @@ TEST_F(TopoShapeExpansionTest, makeElementFilletBothCircularEdgesOfCylinderAtLim
         }
     }
     EXPECT_EQ(cylindricalFaces, 0);
+    expectNoRedundantSameDomainTopology(result);
 }
 
 TEST_F(TopoShapeExpansionTest, makeElementFilletTopCircularEdgeOfCylinderToHemisphere)
@@ -2760,6 +2774,7 @@ TEST_F(TopoShapeExpansionTest, makeElementFilletTopCircularEdgeOfCylinderToHemis
     }
     EXPECT_EQ(sphericalFaces, 1);
     EXPECT_EQ(cylindricalFaces, 0);
+    expectNoRedundantSameDomainTopology(hemisphere);
     EXPECT_EQ(planarFaces, 1);
 }
 
@@ -2811,6 +2826,7 @@ TEST_F(TopoShapeExpansionTest, makeElementFilletTopOfCylindricalBossToHemisphere
     }
     EXPECT_EQ(sphericalFaces, 1);
     EXPECT_EQ(cylindricalFaces, 0);
+    expectNoRedundantSameDomainTopology(result);
 }
 
 TEST_F(TopoShapeExpansionTest, makeElementFilletTopOfOffsetCylindricalBossToHemisphere)
@@ -2985,6 +3001,7 @@ TEST_F(TopoShapeExpansionTest, makeElementFilletBothSidesOfSquareThroughPocketAt
         }
     }
     EXPECT_EQ(verticalPlanarFaces, 4);
+    expectNoRedundantSameDomainTopology(result);
 }
 
 TEST_F(TopoShapeExpansionTest, makeElementFilletBothCircularEdgesOfThroughPocketAtLimit)
