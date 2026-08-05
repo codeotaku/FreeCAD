@@ -21,6 +21,8 @@
  *                                                                         *
  ***************************************************************************/
 
+#include <algorithm>
+
 #include <QAbstractSpinBox>
 #include <QActionEvent>
 #include <QApplication>
@@ -792,6 +794,28 @@ void TaskView::addTaskWatcher(const std::vector<TaskWatcher*>& Watcher)
 
     ActiveWatcher = Watcher;
     addTaskWatcher();
+}
+
+std::vector<QByteArray> TaskView::matchingWatcherCommands()
+{
+    std::vector<QByteArray> result;
+    for (TaskWatcher* watcher : ActiveWatcher) {
+        if (!watcher->shouldShow()) {
+            continue;
+        }
+
+        auto* commandWatcher = qobject_cast<TaskWatcherCommands*>(watcher);
+        if (!commandWatcher) {
+            continue;
+        }
+
+        for (const QByteArray& command : commandWatcher->commands()) {
+            if (std::find(result.begin(), result.end(), command) == result.end()) {
+                result.push_back(command);
+            }
+        }
+    }
+    return result;
 }
 
 void TaskView::takeTaskWatcher(TaskView* other)

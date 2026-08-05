@@ -179,6 +179,8 @@ void Workbench::activated()
 
     const char* Face[] = {
         "PartDesign_NewSketch",
+        "PartDesign_Pad",
+        "PartDesign_Pocket",
         "PartDesign_Fillet",
         "PartDesign_Chamfer",
         "PartDesign_Draft",

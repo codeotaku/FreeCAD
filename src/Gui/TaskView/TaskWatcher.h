@@ -25,6 +25,8 @@
 #pragma once
 
 #include <vector>
+
+#include <QByteArray>
 #include <QObject>
 
 #include <Gui/Selection/SelectionFilter.h>
@@ -76,9 +78,17 @@ class GuiExport TaskWatcherCommands: public TaskWatcher
 public:
     TaskWatcherCommands(const char* Filter, const char* commands[], const char* name, const char* pixmap);
 
+    const std::vector<QByteArray>& commands() const
+    {
+        return Commands;
+    }
+
 public:
     /// is called wenn the document or the Selection changes.
     bool shouldShow() override;
+
+private:
+    std::vector<QByteArray> Commands;
 };
 
 // --------------------------------------------------------------------------

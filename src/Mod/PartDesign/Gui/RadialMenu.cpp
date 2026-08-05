@@ -5,7 +5,6 @@
 #ifndef _PreComp_
 #include <algorithm>
 #include <cmath>
-#include <initializer_list>
 #include <vector>
 
 #include <QApplication>
@@ -19,18 +18,13 @@
 #include <QToolButton>
 #endif
 
-#include <App/DocumentObject.h>
 #include <Gui/Action.h>
 #include <Gui/Application.h>
 #include <Gui/BitmapFactory.h>
 #include <Gui/Command.h>
+#include <Gui/Control.h>
 #include <Gui/MainWindow.h>
-#include <Gui/Selection/Selection.h>
-#include <Gui/Selection/SelectionObject.h>
-#include <Mod/PartDesign/App/Body.h>
-#include <Mod/PartDesign/App/FeatureSketchBased.h>
-#include <Mod/PartDesign/App/ShapeBinder.h>
-#include <Mod/Sketcher/App/SketchObject.h>
+#include <Gui/TaskView/TaskView.h>
 
 #include "RadialMenu.h"
 
@@ -43,176 +37,32 @@ constexpr int minimumRadius = 104;
 constexpr int menuMargin = 12;
 constexpr double pi = 3.14159265358979323846;
 
-using CommandNames = std::vector<const char*>;
-
-void appendUnique(CommandNames& result, std::initializer_list<const char*> commands)
-{
-    for (const char* command : commands) {
-        if (std::find(result.begin(), result.end(), command) == result.end()) {
-            result.push_back(command);
-        }
-    }
-}
+using CommandNames = std::vector<QByteArray>;
 
 CommandNames commandsForSelection()
 {
-    const auto selection = Gui::Selection().getSelectionEx();
-    if (selection.empty()) {
-        return {"PartDesign_NewSketch"};
-    }
-
-    int faces = 0;
-    int edges = 0;
-    int vertices = 0;
-    int sketches = 0;
-    int bodies = 0;
-    int shapeBinders = 0;
-    int sketchBasedFeatures = 0;
-    int otherObjects = 0;
-
-    for (const auto& selected : selection) {
-        const App::DocumentObject* object = selected.getObject();
-        if (!object) {
-            continue;
-        }
-
-        const auto& subNames = selected.getSubNames();
-        if (!subNames.empty()) {
-            for (const auto& subName : subNames) {
-                if (subName.rfind("Face", 0) == 0) {
-                    ++faces;
-                }
-                else if (subName.rfind("Edge", 0) == 0) {
-                    ++edges;
-                }
-                else if (subName.rfind("Vertex", 0) == 0) {
-                    ++vertices;
-                }
-                else {
-                    ++otherObjects;
-                }
-            }
-            continue;
-        }
-
-        if (object->isDerivedFrom<Sketcher::SketchObject>()) {
-            ++sketches;
-        }
-        else if (object->isDerivedFrom<PartDesign::Body>()) {
-            ++bodies;
-        }
-        else if (object->isDerivedFrom<PartDesign::ShapeBinder>()
-                 || object->isDerivedFrom<PartDesign::SubShapeBinder>()) {
-            ++shapeBinders;
-        }
-        else if (object->isDerivedFrom<PartDesign::ProfileBased>()) {
-            ++sketchBasedFeatures;
-        }
-        else {
-            ++otherObjects;
-        }
-    }
-
-    CommandNames result;
-
-    // A selected face is a valid direct profile for Pad and Pocket.  Keep those
-    // high-frequency operations nearest the beginning of the clockwise ring.
-    if (faces == 1 && edges == 0 && vertices == 0 && sketches == 0 && otherObjects == 0) {
-        appendUnique(result,
-                     {"PartDesign_NewSketch",
-                      "PartDesign_Pad",
-                      "PartDesign_Pocket",
-                      "PartDesign_Fillet",
-                      "PartDesign_Chamfer",
-                      "PartDesign_Draft",
-                      "PartDesign_Thickness"});
-    }
-    else if (faces > 0) {
-        appendUnique(result,
-                     {"PartDesign_Fillet",
-                      "PartDesign_Chamfer",
-                      "PartDesign_Draft",
-                      "PartDesign_Thickness"});
-    }
-
-    if (edges > 0) {
-        appendUnique(result, {"PartDesign_Fillet", "PartDesign_Chamfer"});
-    }
-
-    if (vertices > 0 && faces == 0 && edges == 0) {
-        appendUnique(result,
-                     {"Part_DatumPoint",
-                      "Part_DatumLine",
-                      "Part_DatumPlane",
-                      "Part_CoordinateSystem"});
-    }
-
-    if (sketches == 1 && selection.size() == 1) {
-        appendUnique(result,
-                     {"PartDesign_Pad",
-                      "PartDesign_Pocket",
-                      "PartDesign_Hole",
-                      "PartDesign_Revolution",
-                      "PartDesign_Groove",
-                      "PartDesign_AdditiveLoft",
-                      "PartDesign_SubtractiveLoft",
-                      "PartDesign_AdditivePipe",
-                      "PartDesign_SubtractivePipe",
-                      "PartDesign_AdditiveHelix",
-                      "PartDesign_SubtractiveHelix"});
-    }
-    else if (sketches > 1 && sketches == static_cast<int>(selection.size())) {
-        appendUnique(result,
-                     {"PartDesign_AdditiveLoft",
-                      "PartDesign_SubtractiveLoft",
-                      "PartDesign_AdditivePipe",
-                      "PartDesign_SubtractivePipe"});
-    }
-
-    if (shapeBinders == 1 && selection.size() == 1) {
-        appendUnique(result,
-                     {"PartDesign_Pad",
-                      "PartDesign_Pocket",
-                      "PartDesign_Revolution",
-                      "PartDesign_Groove",
-                      "PartDesign_AdditiveLoft",
-                      "PartDesign_SubtractiveLoft",
-                      "PartDesign_AdditivePipe",
-                      "PartDesign_SubtractivePipe"});
-    }
-
-    if (sketchBasedFeatures == 1 && selection.size() == 1) {
-        appendUnique(result,
-                     {"PartDesign_Mirrored",
-                      "PartDesign_LinearPattern",
-                      "PartDesign_PolarPattern",
-                      "PartDesign_MultiTransform"});
-    }
-
-    if (bodies == 1 && selection.size() == 1) {
-        appendUnique(result, {"PartDesign_NewSketch"});
-    }
-    else if (bodies > 1 && bodies == static_cast<int>(selection.size())) {
-        appendUnique(result, {"PartDesign_Boolean"});
-    }
-
-    return result;
+    auto* taskPanel = Gui::Control().taskPanel();
+    return taskPanel ? taskPanel->matchingWatcherCommands() : CommandNames {};
 }
 
 class RadialMenu: public QWidget
 {
 public:
     explicit RadialMenu(const CommandNames& commandNames)
-        : QWidget(Gui::getMainWindow(), Qt::Popup | Qt::FramelessWindowHint)
+        : QWidget(
+              Gui::getMainWindow(),
+              Qt::Tool | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint
+          )
     {
         setObjectName(QStringLiteral("PartDesignRadialMenu"));
         setAttribute(Qt::WA_TranslucentBackground);
         setAttribute(Qt::WA_DeleteOnClose);
+        setAttribute(Qt::WA_ShowWithoutActivating);
         setFocusPolicy(Qt::StrongFocus);
 
         auto& manager = Gui::Application::Instance->commandManager();
-        for (const char* commandName : commandNames) {
-            Gui::Command* command = manager.getCommandByName(commandName);
+        for (const QByteArray& commandName : commandNames) {
+            Gui::Command* command = manager.getCommandByName(commandName.constData());
             if (!command || !command->isActive()) {
                 continue;
             }
@@ -232,17 +82,17 @@ public:
             button->setStyleSheet(QStringLiteral(
                 "QToolButton {"
                 "  background-color: transparent;"
-                "  border: 1px solid transparent;"
+                "  border: 2px solid transparent;"
                 "  border-radius: 36px;"
                 "  padding: 5px;"
                 "}"
                 "QToolButton:hover, QToolButton:focus {"
                 "  background-color: transparent;"
-                "  border: 2px solid palette(highlight);"
+                "  border: 2px solid transparent;"
                 "}"
                 "QToolButton:pressed {"
                 "  background-color: transparent;"
-                "  border: 2px solid palette(dark);"
+                "  border: 2px solid transparent;"
                 "}"));
 
             const QByteArray name(commandName);
@@ -297,8 +147,6 @@ public:
         move(topLeft);
         show();
         raise();
-        activateWindow();
-        setFocus(Qt::ShortcutFocusReason);
     }
 
 protected:
@@ -306,6 +154,10 @@ protected:
     {
         if ((event->key() == Qt::Key_S && event->modifiers() == Qt::NoModifier)
             || event->key() == Qt::Key_Escape) {
+            if (event->isAutoRepeat()) {
+                event->accept();
+                return;
+            }
             close();
             event->accept();
             return;
@@ -336,13 +188,29 @@ protected:
     {
         Q_UNUSED(watched);
 
-        if (!enabled || event->type() != QEvent::KeyPress) {
+        if (!enabled
+            || (event->type() != QEvent::ShortcutOverride
+                && event->type() != QEvent::KeyPress)) {
             return false;
         }
 
         auto* keyEvent = static_cast<QKeyEvent*>(event);
-        if (keyEvent->key() != Qt::Key_S || keyEvent->modifiers() != Qt::NoModifier
-            || keyEvent->isAutoRepeat()) {
+        if (event->type() == QEvent::KeyPress && activeMenu
+            && keyEvent->key() == Qt::Key_Escape && !keyEvent->isAutoRepeat()) {
+            activeMenu->close();
+            keyEvent->accept();
+            return true;
+        }
+
+        if (keyEvent->key() != Qt::Key_S || keyEvent->modifiers() != Qt::NoModifier) {
+            return false;
+        }
+
+        if (keyEvent->isAutoRepeat()) {
+            if (activeMenu) {
+                keyEvent->accept();
+                return true;
+            }
             return false;
         }
 
@@ -361,6 +229,14 @@ protected:
         if (!command || !command->isActive()
             || QKeySequence(command->getShortcut()) != QKeySequence(Qt::Key_S)) {
             return false;
+        }
+
+        // S is also the first key of several multi-key shortcuts.  Claim it
+        // before Qt's shortcut processing so ShortcutManager does not delay
+        // and replay this same key press after the radial menu has opened.
+        if (event->type() == QEvent::ShortcutOverride) {
+            keyEvent->accept();
+            return true;
         }
 
         PartDesignGui::toggleRadialMenu(QCursor::pos());
