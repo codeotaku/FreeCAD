@@ -111,7 +111,7 @@ protected:
         const TopoShape& sketchShape,  // The base sketch for this side (global CS)
         const std::string& method,
         double length,
-        double taperAngleDeg,
+        double taperAngleDeg,  // Also applied after resolving face-limited extrusion methods
         App::PropertyLinkSub& upToFacePropHandle,       // e.g., &UpToFace or &UpToFace2
         App::PropertyLinkSubList& upToShapePropHandle,  // e.g., &UpToShape or &UpToShape2
         gp_Dir dir,

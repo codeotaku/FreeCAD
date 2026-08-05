@@ -23,14 +23,18 @@
  ***************************************************************************/
 
 #include <limits>
+#include <numbers>
 #include <Mod/Part/App/FCBRepAlgoAPI_Fuse.h>
+#include <BRepAdaptor_Surface.hxx>
 #include <BRep_Builder.hxx>
 #include <BRepFeat_MakePrism.hxx>
+#include <BRepLProp_SLProps.hxx>
 #include <BRepPrimAPI_MakePrism.hxx>
 #include <gp_Dir.hxx>
 #include <gp_Ax2.hxx>
 #include <Precision.hxx>
 #include <TopExp_Explorer.hxx>
+#include <TopoDS.hxx>
 #include <TopoDS_Compound.hxx>
 #include <TopoDS_Face.hxx>
 #include <TopoDS_Shape.hxx>
@@ -47,6 +51,102 @@
 FC_LOG_LEVEL_INIT("PartDesign", true, true)
 
 using namespace PartDesign;
+
+namespace
+{
+
+/**
+ * Return true when a face is parallel to the extrusion direction.
+ *
+ * An untapered prism is bounded by two kinds of faces: its start/end faces and the lateral faces
+ * swept by the profile edges.  Only the lateral faces are drafted.  Their surface normals are
+ * perpendicular to the extrusion direction, which gives us a geometry-based test that also works
+ * when an up-to face is not perpendicular to that direction.
+ */
+bool isExtrusionSideFace(const TopoDS_Face& face, const gp_Dir& direction)
+{
+    BRepAdaptor_Surface surface(face);
+    const double u = (surface.FirstUParameter() + surface.LastUParameter()) / 2.0;
+    const double v = (surface.FirstVParameter() + surface.LastVParameter()) / 2.0;
+    BRepLProp_SLProps properties(surface, u, v, 1, Precision::Confusion());
+
+    if (!properties.IsNormalDefined()) {
+        return false;
+    }
+
+    return std::fabs(properties.Normal().Dot(direction)) <= Precision::Angular();
+}
+
+/**
+ * Apply a taper to a prism that has already been limited by a face.
+ *
+ * Building the ordinary prism first is important: BRepFeat_MakePrism contains all of the existing
+ * handling for UpToFace, UpToFirst and UpToLast, including signed offsets and non-perpendicular
+ * limiting faces.  Drafting its lateral faces afterwards preserves that exact end condition while
+ * using the sketch plane as the neutral plane, just like a length-based tapered extrusion.
+ */
+TopoShape taperFaceLimitedPrism(
+    const TopoShape& prism,
+    const TopoShape& sketchShape,
+    const TopoShape& base,
+    const gp_Dir& direction,
+    double taperAngleDeg
+)
+{
+    if (std::fabs(taperAngleDeg) <= Precision::Angular()) {
+        return prism;
+    }
+
+    gp_Pln neutralPlane;
+    if (!sketchShape.findPlane(neutralPlane)) {
+        throw Base::RuntimeError("Extrude: Taper requires a planar profile");
+    }
+
+    std::vector<TopoShape> draftFaces;
+    for (const auto& face : prism.getSubTopoShapes(TopAbs_FACE)) {
+        // Additive up-to-face prisms can contain unchanged faces from the support.  Never draft
+        // those faces; doing so would alter the existing body instead of only the new extrusion.
+        if (!base.isNull() && base.findShape(face.getShape()) > 0) {
+            continue;
+        }
+
+        const auto& occFace = TopoDS::Face(face.getShape());
+        if (!isExtrusionSideFace(occFace, direction)) {
+            continue;
+        }
+
+        // OCCT's draft operation supports the surface types produced by straight and circular
+        // sketch edges.  Reject unsupported lateral surfaces instead of silently leaving part of
+        // an extrusion untapered.
+        BRepAdaptor_Surface surface(occFace);
+        const auto surfaceType = surface.GetType();
+        if (surfaceType != GeomAbs_Plane && surfaceType != GeomAbs_Cylinder
+            && surfaceType != GeomAbs_Cone) {
+            throw Base::RuntimeError(
+                "Extrude: Tapered face-limited extrusion only supports planar, cylindrical, or "
+                "conical side faces"
+            );
+        }
+
+        draftFaces.push_back(face);
+    }
+
+    if (draftFaces.empty()) {
+        throw Base::RuntimeError("Extrude: No lateral faces found for tapered extrusion");
+    }
+
+    // Use a separate result object.  Apart from preserving the source while OCCT builds the draft,
+    // this also lets TopoShape maintain the operation's element mapping correctly.
+    return prism.makeElementDraft(
+        draftFaces,
+        direction,
+        Base::toRadians(taperAngleDeg),
+        neutralPlane,
+        false
+    );
+}
+
+}  // namespace
 
 const char* FeatureExtrude::SideTypesEnums[] = {"One side", "Two sides", "Symmetric", nullptr};
 
@@ -230,6 +330,7 @@ void FeatureExtrude::updateProperties()
             localAlongSketchNormal = true;
         }
         else if (method == "UpToFace") {
+            taperVisible = true;
             upToFaceEnabled = true;
             localOffset = true;
         }
@@ -238,6 +339,7 @@ void FeatureExtrude::updateProperties()
             localOffset = true;
         }
         else if (method == "UpToLast" || method == "UpToFirst") {
+            taperVisible = true;
             localOffset = true;
         }
         else if (method == "ThroughAll") {
@@ -906,6 +1008,16 @@ TopoShape FeatureExtrude::generateSingleExtrusionSide(
                     "Extrude: Unable to reach the selected shape, please select faces"
                 );
             }
+        }
+
+        if (method == "UpToFace" || method == "UpToFirst" || method == "UpToLast") {
+            // The limiting prism already includes all UpToFace/First/Last and offset behavior.
+            // Applying the draft afterwards changes only its lateral faces and therefore keeps the
+            // selected termination surface intact.  Keep this outside the BRepFeat recovery block
+            // so a taper failure is reported instead of silently returning the untapered prism.
+            // UpToShape intentionally retains its previous non-tapered behavior because its taper
+            // property remains hidden and read-only.
+            prism = taperFaceLimitedPrism(prism, sketchshape, base, dir, -taperAngleDeg);
         }
     }
     else if (method == "Length" || method == "ThroughAll") {

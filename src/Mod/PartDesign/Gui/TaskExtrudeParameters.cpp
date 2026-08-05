@@ -813,12 +813,15 @@ void TaskExtrudeParameters::updateSideUI(
     }
     else if (sideMode == Mode::ToLast && featureType == Type::Pad) {
         isOffsetVisible = true;
+        isTaperVisible = true;
     }
     else if (sideMode == Mode::ToFirst) {
         isOffsetVisible = true;
+        isTaperVisible = true;
     }
     else if (sideMode == Mode::ToFace) {
         isOffsetVisible = true;
+        isTaperVisible = true;
         isFaceVisible = true;
         if (setFocus) {
             QMetaObject::invokeMethod(s.lineFaceName, "setFocus", Qt::QueuedConnection);

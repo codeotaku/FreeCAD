@@ -21,6 +21,7 @@
 # *                                                                         *
 # ***************************************************************************
 
+import math
 import unittest
 
 import FreeCAD
@@ -88,6 +89,45 @@ class TestPocket(unittest.TestCase):
         self.Pocket001.Type = 1
         self.Doc.recompute()
         self.assertAlmostEqual(self.Pocket001.Shape.Volume, 62.5)
+
+    def testPocketToFirstWithTaperAndOffset(self):
+        """A face-limited pocket must apply both its signed offset and taper angle."""
+        self.Body = self.Doc.addObject("PartDesign::Body", "Body")
+        self.PadSketch = self.Doc.addObject("Sketcher::SketchObject", "PadSketch")
+        self.Body.addObject(self.PadSketch)
+        TestSketcherApp.CreateRectangleSketch(self.PadSketch, (0, 0), (10, 10))
+        self.Doc.recompute()
+
+        # Build downward from the sketch plane so the pocket can cut through a simple block.
+        self.Pad = self.Doc.addObject("PartDesign::Pad", "Pad")
+        self.Body.addObject(self.Pad)
+        self.Pad.Profile = self.PadSketch
+        self.Pad.Length = 10
+        self.Pad.Reversed = True
+        self.Doc.recompute()
+
+        self.PocketSketch = self.Doc.addObject("Sketcher::SketchObject", "PocketSketch")
+        self.Body.addObject(self.PocketSketch)
+        TestSketcherApp.CreateRectangleSketch(self.PocketSketch, (2, 2), (6, 6))
+        self.Doc.recompute()
+
+        self.Pocket = self.Doc.addObject("PartDesign::Pocket", "Pocket")
+        self.Body.addObject(self.Pocket)
+        self.Pocket.Profile = self.PocketSketch
+        self.Pocket.Type = "UpToFirst"
+        self.Pocket.Offset = -2
+        self.Pocket.TaperAngle = 5
+        self.Doc.recompute()
+
+        self.assertNotIn("Invalid", self.Pocket.State)
+        self.assertNotIn("ReadOnly", self.Pocket.getEditorMode("TaperAngle"))
+
+        # The -2 mm offset moves the limiting face back toward the sketch, producing an 8 mm-deep
+        # square frustum.  This volume check proves that taper and offset were both applied.
+        depth = 8.0
+        lowerSide = 6.0 - 2.0 * depth * math.tan(math.radians(5.0))
+        removedVolume = depth / 3.0 * (36.0 + 6.0 * lowerSide + lowerSide**2)
+        self.assertAlmostEqual(self.Pocket.Shape.Volume, 1000.0 - removedVolume, places=6)
 
     def testPocketToFirstCase(self):
         self.Body = self.Doc.addObject("PartDesign::Body", "Body")
