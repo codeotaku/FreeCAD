@@ -75,6 +75,13 @@ Pad::Pad()
         App::Prop_None,
         "Measure pad length along the sketch normal direction"
     );
+    ADD_PROPERTY_TYPE(
+        AlongSurfaceNormal,
+        (false),
+        "Pad",
+        App::Prop_None,
+        "Offset a face profile along its local surface normals"
+    );
     ADD_PROPERTY_TYPE(UpToFace, (nullptr), "Side1", App::Prop_None, "Face where pad will end");
     ADD_PROPERTY_TYPE(UpToShape, (nullptr), "Side1", App::Prop_None, "Faces or shape(s) where pad will end");
     ADD_PROPERTY_TYPE(UpToFace2, (nullptr), "Side2", App::Prop_None, "Face where pad will end on side2");

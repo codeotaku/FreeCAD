@@ -302,6 +302,11 @@ TopoDS_Shape ProjectOnSurface::createCompound(const std::vector<TopoDS_Shape>& s
     return {std::move(aCompound)};
 }
 
+namespace
+{
+TopoDS_Wire getProjectedWire(BRepProj_Projection& projection, const TopoDS_Shape& reference);
+}
+
 std::vector<TopoDS_Shape> ProjectOnSurface::createProjectedWire(
     const TopoDS_Shape& shape,
     const TopoDS_Face& supportFace,
@@ -325,6 +330,21 @@ std::vector<TopoDS_Shape> ProjectOnSurface::createProjectedWire(
         return wires;
     }
     if (shape.ShapeType() == TopAbs_WIRE || shape.ShapeType() == TopAbs_EDGE) {
+        if (shape.Closed()) {
+            BRepProj_Projection projection(shape, supportFace, dir);
+            TopoDS_Wire projectedWire = getProjectedWire(projection, shape);
+            TopoDS_Wire fixedWire = fixWire(projectedWire, supportFace);
+            if (!fixedWire.IsNull()) {
+                auto face = createFaceFromWire({fixedWire}, supportFace);
+                auto face_or_solid = createSolidIfHeight(face);
+                if (!face_or_solid.IsNull()) {
+                    return {face_or_solid};
+                }
+                if (!face.IsNull()) {
+                    return {face};
+                }
+            }
+        }
         return projectWire(shape, supportFace, dir);
     }
 

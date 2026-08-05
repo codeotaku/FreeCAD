@@ -94,6 +94,8 @@ void TaskExtrudeParameters::setupDialog()
     ui->ZDirectionEdit->setDecimals(UserDecimals);
 
     ui->checkBoxAlongDirection->setChecked(extrude->AlongSketchNormal.getValue());
+    ui->checkBoxAlongSurfaceNormal->setChecked(extrude->AlongSurfaceNormal.getValue());
+    ui->groupBox->setEnabled(!extrude->AlongSurfaceNormal.getValue());
 
     ui->XDirectionEdit->setValue(extrude->Direction.getValue().x);
     ui->YDirectionEdit->setValue(extrude->Direction.getValue().y);
@@ -319,6 +321,8 @@ void TaskExtrudeParameters::connectSlots()
             this, &TaskExtrudeParameters::onDirectionCBChanged);
     connect(ui->checkBoxAlongDirection, &QCheckBox::toggled,
             this, &TaskExtrudeParameters::onAlongSketchNormalChanged);
+    connect(ui->checkBoxAlongSurfaceNormal, &QCheckBox::toggled,
+            this, &TaskExtrudeParameters::onAlongSurfaceNormalChanged);
     connect(ui->XDirectionEdit, qOverload<double>(&QDoubleSpinBox::valueChanged),
             this, &TaskExtrudeParameters::onXDirectionEditChanged);
     connect(ui->YDirectionEdit, qOverload<double>(&QDoubleSpinBox::valueChanged),
@@ -916,6 +920,17 @@ void TaskExtrudeParameters::onAlongSketchNormalChanged(bool on)
     }
 }
 
+void TaskExtrudeParameters::onAlongSurfaceNormalChanged(bool on)
+{
+    if (auto extrude = getObject<PartDesign::FeatureExtrude>()) {
+        extrude->AlongSurfaceNormal.setValue(on);
+        ui->groupBox->setEnabled(!on);
+        tryRecomputeFeature();
+
+        setGizmoPositions();
+    }
+}
+
 void TaskExtrudeParameters::onAllFacesToggled(bool on, Side side)
 {
     auto& sideCtrl = getSideController(side);
@@ -1163,6 +1178,11 @@ bool TaskExtrudeParameters::getAlongSketchNormal() const
     return ui->checkBoxAlongDirection->isChecked();
 }
 
+bool TaskExtrudeParameters::getAlongSurfaceNormal() const
+{
+    return ui->checkBoxAlongSurfaceNormal->isChecked();
+}
+
 bool TaskExtrudeParameters::getCustom() const
 {
     return (ui->directionCB->currentIndex() == DirectionModes::Custom);
@@ -1314,6 +1334,7 @@ void TaskExtrudeParameters::applyParameters()
     );
     FCMD_OBJ_CMD(obj, "ReferenceAxis = " << getReferenceAxis());
     FCMD_OBJ_CMD(obj, "AlongSketchNormal = " << (getAlongSketchNormal() ? 1 : 0));
+    FCMD_OBJ_CMD(obj, "AlongSurfaceNormal = " << (getAlongSurfaceNormal() ? 1 : 0));
     FCMD_OBJ_CMD(obj, "SideType = " << getSidesMode());
     FCMD_OBJ_CMD(obj, "Type = " << type1);
     FCMD_OBJ_CMD(obj, "Type2 = " << type2);
@@ -1406,6 +1427,10 @@ void TaskExtrudeParameters::setGizmoPositions()
 
     auto extrude = getObject<PartDesign::FeatureExtrude>();
     if (!extrude || extrude->isError()) {
+        gizmoContainer->visible = false;
+        return;
+    }
+    if (extrude->AlongSurfaceNormal.getValue()) {
         gizmoContainer->visible = false;
         return;
     }

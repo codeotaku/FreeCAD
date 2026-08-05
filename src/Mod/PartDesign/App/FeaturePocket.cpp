@@ -82,6 +82,13 @@ Pocket::Pocket()
         App::Prop_None,
         "Measure pocket length along the sketch normal direction"
     );
+    ADD_PROPERTY_TYPE(
+        AlongSurfaceNormal,
+        (false),
+        "Pocket",
+        App::Prop_None,
+        "Offset a face profile along its local surface normals"
+    );
     ADD_PROPERTY_TYPE(UpToFace, (nullptr), "Side1", App::Prop_None, "Face where pocket will end");
     ADD_PROPERTY_TYPE(
         UpToShape,

@@ -64,9 +64,10 @@ short FeatureExtrude::mustExecute() const
     if (Placement.isTouched() || SideType.isTouched() || Type.isTouched() || Type2.isTouched()
         || Length.isTouched() || Length2.isTouched() || TaperAngle.isTouched()
         || TaperAngle2.isTouched() || UseCustomVector.isTouched() || Direction.isTouched()
-        || ReferenceAxis.isTouched() || AlongSketchNormal.isTouched() || Offset.isTouched()
-        || Offset2.isTouched() || UpToFace.isTouched() || UpToFace2.isTouched()
-        || UpToShape.isTouched() || UpToShape2.isTouched()) {
+        || ReferenceAxis.isTouched() || AlongSketchNormal.isTouched()
+        || AlongSurfaceNormal.isTouched() || Offset.isTouched() || Offset2.isTouched()
+        || UpToFace.isTouched() || UpToFace2.isTouched() || UpToShape.isTouched()
+        || UpToShape2.isTouched()) {
         return 1;
     }
     return ProfileBased::mustExecute();
@@ -366,7 +367,14 @@ App::DocumentObjectExecReturn* FeatureExtrude::buildExtrusion(ExtrudeOptions opt
     try {
         obj = getVerifiedObject();
         if (makeface) {
-            sketchshape = getTopoShapeVerifiedFace();
+            if (AlongSurfaceNormal.getValue()) {
+                // A curved wire cannot be promoted by the planar sketch face makers. Surface-normal
+                // extrusion therefore consumes an existing face from Project on Surface or a binder.
+                sketchshape = getProfileShape();
+            }
+            else {
+                sketchshape = getTopoShapeVerifiedFace();
+            }
         }
         else {
             std::vector<TopoShape> shapes;
@@ -424,9 +432,6 @@ App::DocumentObjectExecReturn* FeatureExtrude::buildExtrusion(ExtrudeOptions opt
     // if the Base property has a valid shape, fuse the prism into it
     TopoShape base = getBaseTopoShape(true);
 
-    // get the normal vector of the sketch
-    Base::Vector3d SketchVector = getProfileNormal();
-
     try {
         this->positionByPrevious();
         auto invObjLoc = getLocation().Inverted();
@@ -434,45 +439,6 @@ App::DocumentObjectExecReturn* FeatureExtrude::buildExtrusion(ExtrudeOptions opt
         auto invTrsf = invObjLoc.Transformation();
 
         base.move(invObjLoc);
-
-        Base::Vector3d paddingDirection = computeDirection(SketchVector, inverseDirection);
-
-        // create vector in padding direction with length 1
-        gp_Dir dir(paddingDirection.x, paddingDirection.y, paddingDirection.z);
-
-        // The length of a gp_Dir is 1 so the resulting pad would have
-        // the length L in the direction of dir. But we want to have its height in the
-        // direction of the normal vector.
-        // Therefore we must multiply L by the factor that is necessary
-        // to make dir as long that its projection to the SketchVector
-        // equals the SketchVector.
-        // This is the scalar product of both vectors.
-        // Since the pad length cannot be negative, the factor must not be negative.
-
-        double factor = fabs(dir * gp_Dir(SketchVector.x, SketchVector.y, SketchVector.z));
-
-        // factor would be zero if vectors are orthogonal
-        if (factor < Precision::Confusion()) {
-            return new App::DocumentObjectExecReturn(QT_TRANSLATE_NOOP(
-                "Exception",
-                "Creation failed because direction is orthogonal to sketch's normal vector"
-            ));
-        }
-
-        // perform the length correction if not along custom vector
-        if (AlongSketchNormal.getValue()) {
-            L = L / factor;
-            L2 = L2 / factor;
-        }
-
-        // explicitly set the Direction so that the dialog shows also the used direction
-        // if the sketch's normal vector was used
-        Direction.setValue(paddingDirection);
-
-        dir.Transform(invTrsf);
-        if (Reversed.getValue()) {
-            dir.Reverse();
-        }
 
         if (sketchshape.isNull()) {
             return new App::DocumentObjectExecReturn(
@@ -482,100 +448,105 @@ App::DocumentObjectExecReturn* FeatureExtrude::buildExtrusion(ExtrudeOptions opt
         sketchshape.move(invObjLoc);
 
         std::vector<TopoShape> prisms;  // Stores prisms, all in global CS
-        double taper1 = TaperAngle.getValue();
-        double offset1 = Offset.getValue();
 
-        if (Sidemethod == "One side") {
-            TopoShape prism1 = generateSingleExtrusionSide(
-                sketchshape,
-                method,
-                L,
-                taper1,
-                UpToFace,
-                UpToShape,
-                dir,
-                offset1,
-                makeface,
-                base,
-                invObjLoc
-            );
-            prisms.push_back(prism1);
-        }
-        else if (Sidemethod == "Symmetric") {
-            // For Length mode, we are not doing a mirror, but we extrude along the same axis
-            // in both directions as it is what users expect.
-            if (method == "Length") {
-                if (std::fabs(taper1) > Precision::Angular()) {
-                    // TAPERED case: We must create two separate prisms and fuse them
-                    // to ensure the taper originates correctly from the sketch plane in both
-                    // directions.
-                    L /= 2.0;
-                    TopoShape prism1 = generateSingleExtrusionSide(
-                        sketchshape.makeElementCopy(),
-                        method,
-                        L,
-                        taper1,
-                        UpToFace,
-                        UpToShape,
-                        dir,
-                        offset1,
-                        makeface,
-                        base,
-                        invObjLoc
-                    );
-                    if (!prism1.isNull() && !prism1.getShape().IsNull()) {
-                        prisms.push_back(prism1);
-                    }
-
-                    gp_Dir dir2 = dir;
-                    dir2.Reverse();
-                    TopoShape prism2 = generateSingleExtrusionSide(
-                        sketchshape.makeElementCopy(),
-                        method,
-                        L,
-                        taper1,
-                        UpToFace,
-                        UpToShape,
-                        dir2,
-                        offset1,
-                        makeface,
-                        base,
-                        invObjLoc
-                    );
-                    if (!prism2.isNull() && !prism2.getShape().IsNull()) {
-                        prisms.push_back(prism2);
-                    }
-                }
-                else {
-                    // NON-TAPERED case: We can optimize by creating a single prism.
-                    // Translate the sketch to the start position (-L/2) and extrude by the full
-                    // length L.
-                    gp_Trsf start_transform;
-                    start_transform.SetTranslation(gp_Vec(dir).Reversed() * (L / 2.0));
-
-                    TopoShape moved_sketch = sketchshape.makeElementCopy();
-                    moved_sketch.move(start_transform);
-
-                    TopoShape prism1 = generateSingleExtrusionSide(
-                        moved_sketch,
-                        method,
-                        L,
-                        taper1,
-                        UpToFace,
-                        UpToShape,
-                        dir,
-                        offset1,
-                        makeface,
-                        base,
-                        invObjLoc
-                    );
-                    if (!prism1.isNull() && !prism1.getShape().IsNull()) {
-                        prisms.push_back(prism1);
-                    }
-                }
+        if (AlongSurfaceNormal.getValue()) {
+            if (Sidemethod != "One side" || method != "Length") {
+                return new App::DocumentObjectExecReturn(QT_TRANSLATE_NOOP(
+                    "Exception",
+                    "Surface-normal extrusion currently supports one side with a fixed length only."
+                ));
             }
-            else {
-                // For "UpToFace", "UpToShape", etc., mirror the result.
+            if (sketchshape.countSubShapes(TopAbs_FACE) != 1) {
+                return new App::DocumentObjectExecReturn(QT_TRANSLATE_NOOP(
+                    "Exception",
+                    "Surface-normal extrusion requires exactly one profile face. Set Project on "
+                    "Surface mode to Faces or All, then select or bind the projected face."
+                ));
+            }
+            if (sketchshape.shapeType(true) != TopAbs_FACE) {
+                sketchshape = sketchshape.getSubTopoShape(TopAbs_FACE, 1);
+            }
+            if (hasTaperedAngle()) {
+                return new App::DocumentObjectExecReturn(
+                    QT_TRANSLATE_NOOP("Exception", "Taper is not supported for surface-normal extrusion.")
+                );
+            }
+            if (UseCustomVector.getValue() || ReferenceAxis.getValue()) {
+                return new App::DocumentObjectExecReturn(QT_TRANSLATE_NOOP(
+                    "Exception",
+                    "A custom direction is not supported for surface-normal extrusion."
+                ));
+            }
+
+            double distance = L;
+            if (addSubType == Type::Subtractive) {
+                distance = -distance;
+            }
+            if (Reversed.getValue()) {
+                distance = -distance;
+            }
+
+            TopoShape prism(0, getDocument()->getStringHasher());
+            prism.makeElementOffset(
+                sketchshape,
+                distance,
+                Precision::Confusion(),
+                false,
+                false,
+                0,
+                Part::JoinType::arc,
+                Part::FillType::fill,
+                Part::OpCodes::Extrude
+            );
+            prisms.push_back(prism);
+        }
+        else {
+            // get the normal vector of the sketch
+            Base::Vector3d SketchVector = getProfileNormal();
+
+            Base::Vector3d paddingDirection = computeDirection(SketchVector, inverseDirection);
+
+            // create vector in padding direction with length 1
+            gp_Dir dir(paddingDirection.x, paddingDirection.y, paddingDirection.z);
+
+            // The length of a gp_Dir is 1 so the resulting pad would have
+            // the length L in the direction of dir. But we want to have its height in the
+            // direction of the normal vector.
+            // Therefore we must multiply L by the factor that is necessary
+            // to make dir as long that its projection to the SketchVector
+            // equals the SketchVector.
+            // This is the scalar product of both vectors.
+            // Since the pad length cannot be negative, the factor must not be negative.
+
+            double factor = fabs(dir * gp_Dir(SketchVector.x, SketchVector.y, SketchVector.z));
+
+            // factor would be zero if vectors are orthogonal
+            if (factor < Precision::Confusion()) {
+                return new App::DocumentObjectExecReturn(QT_TRANSLATE_NOOP(
+                    "Exception",
+                    "Creation failed because direction is orthogonal to sketch's normal vector"
+                ));
+            }
+
+            // perform the length correction if not along custom vector
+            if (AlongSketchNormal.getValue()) {
+                L = L / factor;
+                L2 = L2 / factor;
+            }
+
+            // explicitly set the Direction so that the dialog shows also the used direction
+            // if the sketch's normal vector was used
+            Direction.setValue(paddingDirection);
+
+            dir.Transform(invTrsf);
+            if (Reversed.getValue()) {
+                dir.Reverse();
+            }
+
+            double taper1 = TaperAngle.getValue();
+            double offset1 = Offset.getValue();
+
+            if (Sidemethod == "One side") {
                 TopoShape prism1 = generateSingleExtrusionSide(
                     sketchshape,
                     method,
@@ -590,111 +561,202 @@ App::DocumentObjectExecReturn* FeatureExtrude::buildExtrusion(ExtrudeOptions opt
                     invObjLoc
                 );
                 prisms.push_back(prism1);
-
-                // Prism 2: Mirror prism1 across the sketch plane.
-                // The mirror plane's normal must be the sketch normal, not the extrusion direction.
-                gp_Dir sketchNormalDir(SketchVector.x, SketchVector.y, SketchVector.z);
-                sketchNormalDir.Transform(invTrsf);  // Transform to global CS, like 'dir' was.
-
-                Base::Vector3d sketchCenter = sketchshape.getBoundBox().GetCenter();
-                gp_Ax2 mirrorPlane(
-                    gp_Pnt(sketchCenter.x, sketchCenter.y, sketchCenter.z),
-                    sketchNormalDir
-                );
-                TopoShape prism2 = prism1.makeElementMirror(mirrorPlane);
-                prisms.push_back(prism2);
             }
-        }
-        else if (Sidemethod == "Two sides") {
-            double taper2 = TaperAngle2.getValue();
-            double offset2 = Offset2.getValue();
-            gp_Dir dir2 = dir;
-            dir2.Reverse();
-            bool noTaper = std::fabs(taper1) < Precision::Angular()
-                && std::fabs(taper2) < Precision::Angular();
-            bool method1LengthBased = method == "Length" || method == "ThroughAll";
-            bool method2LengthBased = method2 == "Length" || method2 == "ThroughAll";
+            else if (Sidemethod == "Symmetric") {
+                // For Length mode, we are not doing a mirror, but we extrude along the same axis
+                // in both directions as it is what users expect.
+                if (method == "Length") {
+                    if (std::fabs(taper1) > Precision::Angular()) {
+                        // TAPERED case: We must create two separate prisms and fuse them
+                        // to ensure the taper originates correctly from the sketch plane in both
+                        // directions.
+                        L /= 2.0;
+                        TopoShape prism1 = generateSingleExtrusionSide(
+                            sketchshape.makeElementCopy(),
+                            method,
+                            L,
+                            taper1,
+                            UpToFace,
+                            UpToShape,
+                            dir,
+                            offset1,
+                            makeface,
+                            base,
+                            invObjLoc
+                        );
+                        if (!prism1.isNull() && !prism1.getShape().IsNull()) {
+                            prisms.push_back(prism1);
+                        }
 
-            if (method1LengthBased && method2 != "UpToFirst" && noTaper) {
-                gp_Trsf start_transform;
-                start_transform.SetTranslation(gp_Vec(dir) * L);
+                        gp_Dir dir2 = dir;
+                        dir2.Reverse();
+                        TopoShape prism2 = generateSingleExtrusionSide(
+                            sketchshape.makeElementCopy(),
+                            method,
+                            L,
+                            taper1,
+                            UpToFace,
+                            UpToShape,
+                            dir2,
+                            offset1,
+                            makeface,
+                            base,
+                            invObjLoc
+                        );
+                        if (!prism2.isNull() && !prism2.getShape().IsNull()) {
+                            prisms.push_back(prism2);
+                        }
+                    }
+                    else {
+                        // NON-TAPERED case: We can optimize by creating a single prism.
+                        // Translate the sketch to the start position (-L/2) and extrude by the full
+                        // length L.
+                        gp_Trsf start_transform;
+                        start_transform.SetTranslation(gp_Vec(dir).Reversed() * (L / 2.0));
 
-                TopoShape moved_sketch = sketchshape.makeElementCopy();
-                moved_sketch.move(start_transform);
-                TopoShape prism = generateSingleExtrusionSide(
-                    moved_sketch,
-                    method2,
-                    L + L2,
-                    0.0,
-                    UpToFace2,
-                    UpToShape2,
-                    dir2,
-                    offset2,
-                    makeface,
-                    base,
-                    invObjLoc
-                );
-                if (!prism.isNull() && !prism.getShape().IsNull()) {
-                    prisms.push_back(prism);
+                        TopoShape moved_sketch = sketchshape.makeElementCopy();
+                        moved_sketch.move(start_transform);
+
+                        TopoShape prism1 = generateSingleExtrusionSide(
+                            moved_sketch,
+                            method,
+                            L,
+                            taper1,
+                            UpToFace,
+                            UpToShape,
+                            dir,
+                            offset1,
+                            makeface,
+                            base,
+                            invObjLoc
+                        );
+                        if (!prism1.isNull() && !prism1.getShape().IsNull()) {
+                            prisms.push_back(prism1);
+                        }
+                    }
                 }
-            }
-            else if (method2LengthBased && method != "UpToFirst" && noTaper) {
-                gp_Trsf start_transform;
-                start_transform.SetTranslation(gp_Vec(dir).Reversed() * L2);
-
-                TopoShape moved_sketch = sketchshape.makeElementCopy();
-                moved_sketch.move(start_transform);
-                TopoShape prism = generateSingleExtrusionSide(
-                    moved_sketch,
-                    method,
-                    L + L2,
-                    0.0,
-                    UpToFace,
-                    UpToShape,
-                    dir,
-                    offset1,
-                    makeface,
-                    base,
-                    invObjLoc
-                );
-                if (!prism.isNull() && !prism.getShape().IsNull()) {
-                    prisms.push_back(prism);
-                }
-            }
-            else {
-                TopoShape prism1 = generateSingleExtrusionSide(
-                    sketchshape.makeElementCopy(),
-                    method,
-                    L,
-                    taper1,
-                    UpToFace,
-                    UpToShape,
-                    dir,
-                    offset1,
-                    makeface,
-                    base,
-                    invObjLoc
-                );
-                if (!prism1.isNull() && !prism1.getShape().IsNull()) {
+                else {
+                    // For "UpToFace", "UpToShape", etc., mirror the result.
+                    TopoShape prism1 = generateSingleExtrusionSide(
+                        sketchshape,
+                        method,
+                        L,
+                        taper1,
+                        UpToFace,
+                        UpToShape,
+                        dir,
+                        offset1,
+                        makeface,
+                        base,
+                        invObjLoc
+                    );
                     prisms.push_back(prism1);
-                }
 
-                // Side 2
-                TopoShape prism2 = generateSingleExtrusionSide(
-                    sketchshape.makeElementCopy(),
-                    method2,
-                    L2,
-                    taper2,
-                    UpToFace2,
-                    UpToShape2,
-                    dir2,
-                    offset2,
-                    makeface,
-                    base,
-                    invObjLoc
-                );
-                if (!prism2.isNull() && !prism2.getShape().IsNull()) {
+                    // Prism 2: Mirror prism1 across the sketch plane.
+                    // The mirror plane's normal must be the sketch normal, not the extrusion direction.
+                    gp_Dir sketchNormalDir(SketchVector.x, SketchVector.y, SketchVector.z);
+                    sketchNormalDir.Transform(invTrsf);  // Transform to global CS, like 'dir' was.
+
+                    Base::Vector3d sketchCenter = sketchshape.getBoundBox().GetCenter();
+                    gp_Ax2 mirrorPlane(
+                        gp_Pnt(sketchCenter.x, sketchCenter.y, sketchCenter.z),
+                        sketchNormalDir
+                    );
+                    TopoShape prism2 = prism1.makeElementMirror(mirrorPlane);
                     prisms.push_back(prism2);
+                }
+            }
+            else if (Sidemethod == "Two sides") {
+                double taper2 = TaperAngle2.getValue();
+                double offset2 = Offset2.getValue();
+                gp_Dir dir2 = dir;
+                dir2.Reverse();
+                bool noTaper = std::fabs(taper1) < Precision::Angular()
+                    && std::fabs(taper2) < Precision::Angular();
+                bool method1LengthBased = method == "Length" || method == "ThroughAll";
+                bool method2LengthBased = method2 == "Length" || method2 == "ThroughAll";
+
+                if (method1LengthBased && method2 != "UpToFirst" && noTaper) {
+                    gp_Trsf start_transform;
+                    start_transform.SetTranslation(gp_Vec(dir) * L);
+
+                    TopoShape moved_sketch = sketchshape.makeElementCopy();
+                    moved_sketch.move(start_transform);
+                    TopoShape prism = generateSingleExtrusionSide(
+                        moved_sketch,
+                        method2,
+                        L + L2,
+                        0.0,
+                        UpToFace2,
+                        UpToShape2,
+                        dir2,
+                        offset2,
+                        makeface,
+                        base,
+                        invObjLoc
+                    );
+                    if (!prism.isNull() && !prism.getShape().IsNull()) {
+                        prisms.push_back(prism);
+                    }
+                }
+                else if (method2LengthBased && method != "UpToFirst" && noTaper) {
+                    gp_Trsf start_transform;
+                    start_transform.SetTranslation(gp_Vec(dir).Reversed() * L2);
+
+                    TopoShape moved_sketch = sketchshape.makeElementCopy();
+                    moved_sketch.move(start_transform);
+                    TopoShape prism = generateSingleExtrusionSide(
+                        moved_sketch,
+                        method,
+                        L + L2,
+                        0.0,
+                        UpToFace,
+                        UpToShape,
+                        dir,
+                        offset1,
+                        makeface,
+                        base,
+                        invObjLoc
+                    );
+                    if (!prism.isNull() && !prism.getShape().IsNull()) {
+                        prisms.push_back(prism);
+                    }
+                }
+                else {
+                    TopoShape prism1 = generateSingleExtrusionSide(
+                        sketchshape.makeElementCopy(),
+                        method,
+                        L,
+                        taper1,
+                        UpToFace,
+                        UpToShape,
+                        dir,
+                        offset1,
+                        makeface,
+                        base,
+                        invObjLoc
+                    );
+                    if (!prism1.isNull() && !prism1.getShape().IsNull()) {
+                        prisms.push_back(prism1);
+                    }
+
+                    // Side 2
+                    TopoShape prism2 = generateSingleExtrusionSide(
+                        sketchshape.makeElementCopy(),
+                        method2,
+                        L2,
+                        taper2,
+                        UpToFace2,
+                        UpToShape2,
+                        dir2,
+                        offset2,
+                        makeface,
+                        base,
+                        invObjLoc
+                    );
+                    if (!prism2.isNull() && !prism2.getShape().IsNull()) {
+                        prisms.push_back(prism2);
+                    }
                 }
             }
         }

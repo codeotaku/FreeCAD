@@ -21,9 +21,11 @@
 # *                                                                         *
 # ***************************************************************************
 
+import math
 import unittest
 
 import FreeCAD
+import Part
 from FreeCAD import Base
 import TestSketcherApp
 
@@ -72,6 +74,72 @@ class TestPad(unittest.TestCase):
         self.Body.addObject(self.Pad)
         self.Doc.recompute()
         self.assertEqual(len(self.Pad.Shape.Faces), 6)
+
+    def testPadAlongCylindricalSurfaceNormal(self):
+        self.Body = self.Doc.addObject("PartDesign::Body", "Body")
+        base = self.Body.newObject("PartDesign::Feature", "Base")
+        base.Shape = Part.makeCylinder(10, 20)
+
+        # A trimmed cylindrical face stands in for a closed sketch projected onto the cylinder.
+        sector = Part.makeCylinder(
+            10, 4, FreeCAD.Vector(0, 0, 8), FreeCAD.Vector(0, 0, 1), 25
+        )
+        profile = self.Doc.addObject("Part::Feature", "CurvedProfile")
+        profile.Shape = sector.Faces[0]
+        surface_profile = self.Body.newObject("PartDesign::SubShapeBinder", "SurfaceProfile")
+        surface_profile.Support = [(profile, ("Face1",))]
+        self.Doc.recompute()
+
+        pad = self.Body.newObject("PartDesign::Pad", "SurfacePad")
+        pad.AlongSurfaceNormal = True
+        pad.Profile = (surface_profile, ["Face1"])
+        pad.Length = 1
+        self.Doc.recompute()
+
+        angle = math.radians(25)
+        expected_tool_volume = 0.5 * (11**2 - 10**2) * angle * 4
+        self.assertNotIn("Invalid", pad.State)
+        self.assertAlmostEqual(pad.AddSubShape.Volume, expected_tool_volume, places=6)
+        self.assertAlmostEqual(pad.Shape.Volume, base.Shape.Volume + expected_tool_volume, places=6)
+
+    def testPadProjectedCircleAlongSurfaceNormal(self):
+        self.Body = self.Doc.addObject("PartDesign::Body", "Body")
+        base = self.Body.newObject("PartDesign::Feature", "Base")
+        base.Shape = Part.makeCylinder(
+            10, 20, FreeCAD.Vector(0, -10, 0), FreeCAD.Vector(0, 1, 0)
+        )
+
+        support = self.Doc.addObject("Part::Feature", "ProjectionSupport")
+        support.Shape = base.Shape
+        source = self.Doc.addObject("Sketcher::SketchObject", "PlanarProfile")
+        source.Placement.Base.z = -15
+        source.addGeometry(
+            Part.Circle(FreeCAD.Vector(), FreeCAD.Vector(0, 0, 1), 2), False
+        )
+        self.Doc.recompute()
+
+        projection = self.Doc.addObject("Part::ProjectOnSurface", "Projection")
+        projection.SupportFace = (support, ["Face1"])
+        projection.Projection = [(source, ("Edge1",))]
+        projection.Direction = FreeCAD.Vector(0, 0, 1)
+        projection.Mode = "Faces"
+        self.Doc.recompute()
+
+        self.assertEqual(len(projection.Shape.Faces), 1)
+        surface_profile = self.Body.newObject("PartDesign::SubShapeBinder", "SurfaceProfile")
+        surface_profile.Support = [(projection, ("Face1",))]
+        self.Doc.recompute()
+
+        pad = self.Body.newObject("PartDesign::Pad", "SurfacePad")
+        pad.AlongSurfaceNormal = True
+        pad.Profile = (surface_profile, ["Face1"])
+        pad.Length = 1
+        self.Doc.recompute()
+
+        self.assertNotIn("Invalid", projection.State)
+        self.assertNotIn("Invalid", pad.State)
+        self.assertEqual(pad.AddSubShape.ShapeType, "Solid")
+        self.assertGreater(pad.Shape.Volume, base.Shape.Volume)
 
     def testPadToFirstCase(self):
         self.Body = self.Doc.addObject("PartDesign::Body", "Body")

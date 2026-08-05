@@ -54,6 +54,7 @@ public:
     App::PropertyBool UseCustomVector;
     App::PropertyVector Direction;
     App::PropertyBool AlongSketchNormal;
+    App::PropertyBool AlongSurfaceNormal;
     App::PropertyLength Offset;
     App::PropertyLength Offset2;
     App::PropertyLinkSub ReferenceAxis;
