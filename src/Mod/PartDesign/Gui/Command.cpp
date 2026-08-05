@@ -26,6 +26,7 @@
 #include <BRep_Tool.hxx>
 #include <BRepAdaptor_Surface.hxx>
 #include <GeomLib_IsPlanarSurface.hxx>
+#include <QCursor>
 #include <QMessageBox>
 #include <TopExp_Explorer.hxx>
 #include <TopLoc_Location.hxx>
@@ -62,6 +63,7 @@
 
 #include "DlgActiveBody.h"
 #include "ReferenceSelection.h"
+#include "RadialMenu.h"
 #include "SketchWorkflow.h"
 #include "TaskFeaturePick.h"
 #include "Utils.h"
@@ -77,6 +79,38 @@ FC_LOG_LEVEL_INIT("PartDesign", true, true)
 
 using namespace std;
 using namespace Attacher;
+
+//===========================================================================
+// PartDesign_RadialMenu
+//===========================================================================
+
+DEF_STD_CMD_A(CmdPartDesignRadialMenu)
+
+CmdPartDesignRadialMenu::CmdPartDesignRadialMenu()
+    : Command("PartDesign_RadialMenu")
+{
+    sAppModule = "PartDesign";
+    sGroup = QT_TR_NOOP("PartDesign");
+    sMenuText = QT_TR_NOOP("Contextual Radial Menu");
+    sToolTipText = QT_TR_NOOP("Shows context-sensitive Part Design tools around the pointer");
+    sWhatsThis = "PartDesign_RadialMenu";
+    sStatusTip = sToolTipText;
+    sPixmap = "PartDesignWorkbench";
+    sAccel = "S";
+    eType = NoTransaction;
+    bCanLog = false;
+}
+
+void CmdPartDesignRadialMenu::activated(int iMsg)
+{
+    Q_UNUSED(iMsg);
+    PartDesignGui::toggleRadialMenu(QCursor::pos());
+}
+
+bool CmdPartDesignRadialMenu::isActive()
+{
+    return hasActiveDocument() && !Gui::Control().activeDialog();
+}
 
 static void copyPlacementExpressions(App::DocumentObject* target, const App::DocumentObject* source)
 {
@@ -2754,6 +2788,8 @@ public:
 void CreatePartDesignCommands()
 {
     Gui::CommandManager& rcCmdMgr = Gui::Application::Instance->commandManager();
+
+    rcCmdMgr.addCommand(new CmdPartDesignRadialMenu());
 
     rcCmdMgr.addCommand(new CmdPartDesignShapeBinder());
     rcCmdMgr.addCommand(new CmdPartDesignSubShapeBinder());
