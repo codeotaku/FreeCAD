@@ -507,6 +507,16 @@
     </widget>
    </item>
    <item>
+    <widget class="QCheckBox" name="checkBoxAlongSurfaceNormal">
+     <property name="toolTip">
+      <string>Offset a face profile along its local surface normals. The prototype supports one side, a fixed length, and no taper.</string>
+     </property>
+     <property name="text">
+      <string>Along surface normals</string>
+     </property>
+    </widget>
+   </item>
+   <item>
     <widget class="QGroupBox" name="groupBox">
      <property name="title">
       <string>Direction</string>

@@ -21,9 +21,11 @@
 # *                                                                         *
 # ***************************************************************************
 
+import math
 import unittest
 
 import FreeCAD
+import Part
 import TestSketcherApp
 
 
@@ -53,6 +55,35 @@ class TestPocket(unittest.TestCase):
         self.Pocket.Length = 1
         self.Doc.recompute()
         self.assertAlmostEqual(self.Pocket.Shape.Volume, 75.0)
+
+    def testPocketAlongSphericalSurfaceNormal(self):
+        self.Body = self.Doc.addObject("PartDesign::Body", "Body")
+        base = self.Body.newObject("PartDesign::Feature", "Base")
+        base.Shape = Part.makeSphere(10)
+
+        # A trimmed spherical face stands in for a closed sketch projected onto a hemisphere.
+        sector = Part.makeSphere(
+            10, FreeCAD.Vector(), FreeCAD.Vector(0, 0, 1), -20, 20, 25
+        )
+        profile = self.Doc.addObject("Part::Feature", "CurvedProfile")
+        profile.Shape = sector.Faces[0]
+        surface_profile = self.Body.newObject("PartDesign::SubShapeBinder", "SurfaceProfile")
+        surface_profile.Support = [(profile, ("Face1",))]
+        self.Doc.recompute()
+
+        pocket = self.Body.newObject("PartDesign::Pocket", "SurfacePocket")
+        pocket.AlongSurfaceNormal = True
+        pocket.Profile = (surface_profile, ["Face1"])
+        pocket.Length = 1
+        self.Doc.recompute()
+
+        solid_angle = math.radians(25) * (math.sin(math.radians(20)) - math.sin(math.radians(-20)))
+        expected_tool_volume = solid_angle * (10**3 - 9**3) / 3
+        self.assertNotIn("Invalid", pocket.State)
+        self.assertAlmostEqual(pocket.AddSubShape.Volume, expected_tool_volume, places=6)
+        self.assertAlmostEqual(
+            pocket.Shape.Volume, base.Shape.Volume - expected_tool_volume, places=6
+        )
 
     def testPocketThroughAllCase(self):
         self.Body = self.Doc.addObject("PartDesign::Body", "Body")

@@ -184,6 +184,7 @@ protected Q_SLOTS:
 private Q_SLOTS:
     void onDirectionCBChanged(int);
     void onAlongSketchNormalChanged(bool);
+    void onAlongSurfaceNormalChanged(bool);
     void onXDirectionEditChanged(double);
     void onYDirectionEditChanged(double);
     void onZDirectionEditChanged(double);
@@ -221,6 +222,7 @@ protected:
     double getOffset() const;
     double getOffset2() const;
     bool getAlongSketchNormal() const;
+    bool getAlongSurfaceNormal() const;
     bool getCustom() const;
     std::string getReferenceAxis() const;
     double getXDirection() const;
