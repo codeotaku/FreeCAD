@@ -109,6 +109,7 @@ TaskWatcherCommands::TaskWatcherCommands(
         for (const char** i = commands; *i; i++) {
             Command* c = mgr.getCommandByName(*i);
             if (c) {
+                Commands.emplace_back(*i);
                 // handled in TaskBox::actionEvent()
                 c->addTo(tb);
             }

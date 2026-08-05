@@ -168,6 +168,9 @@ public:
     void clearTaskWatcher();
     void takeTaskWatcher(TaskView* other);
 
+    /// Return the commands from all task watchers matching the current selection.
+    std::vector<QByteArray> matchingWatcherCommands();
+
     bool isEmpty(bool includeWatcher = true) const;
 
     void clearActionStyle();
