@@ -7,7 +7,7 @@
     <x>0</x>
     <y>0</y>
     <width>232</width>
-    <height>181</height>
+    <height>270</height>
    </rect>
   </property>
   <property name="windowTitle">
@@ -39,16 +39,76 @@
     </widget>
    </item>
    <item>
-    <layout class="QHBoxLayout" name="horizontalLayout_2">
+    <layout class="QHBoxLayout" name="filletTypeLayout">
      <item>
-      <widget class="QLabel" name="label">
+      <widget class="QLabel" name="filletTypeLabel">
        <property name="text">
-        <string>Radius</string>
+        <string>Fillet type</string>
        </property>
       </widget>
      </item>
      <item>
+      <widget class="QComboBox" name="filletType">
+       <property name="currentIndex">
+        <number>0</number>
+       </property>
+       <item>
+        <property name="text">
+         <string>Constant Radius</string>
+        </property>
+       </item>
+       <item>
+        <property name="text">
+         <string>Variable Radius</string>
+        </property>
+       </item>
+      </widget>
+     </item>
+    </layout>
+   </item>
+   <item>
+    <layout class="QGridLayout" name="radiusLayout">
+     <item row="0" column="0" colspan="2">
+      <widget class="QLabel" name="activeEdgeLabel">
+       <property name="font">
+        <font>
+         <bold>true</bold>
+        </font>
+       </property>
+       <property name="text">
+        <string>Select an edge to edit its radius</string>
+       </property>
+      </widget>
+     </item>
+     <item row="1" column="0">
+      <widget class="QLabel" name="startRadiusLabel">
+       <property name="text">
+        <string>Start radius</string>
+       </property>
+      </widget>
+     </item>
+     <item row="1" column="1">
       <widget class="Gui::QuantitySpinBox" name="filletRadius">
+       <property name="toolTip">
+        <string>UI prototype only; per-edge radius values are not yet applied to the fillet</string>
+       </property>
+       <property name="keyboardTracking">
+        <bool>false</bool>
+       </property>
+      </widget>
+     </item>
+     <item row="2" column="0">
+      <widget class="QLabel" name="endRadiusLabel">
+       <property name="text">
+        <string>End radius</string>
+       </property>
+      </widget>
+     </item>
+     <item row="2" column="1">
+      <widget class="Gui::QuantitySpinBox" name="filletEndRadius">
+       <property name="toolTip">
+        <string>UI prototype only; per-edge radius values are not yet applied to the fillet</string>
+       </property>
        <property name="keyboardTracking">
         <bool>false</bool>
        </property>
@@ -75,7 +135,9 @@
  <tabstops>
   <tabstop>buttonRefSel</tabstop>
   <tabstop>listWidgetReferences</tabstop>
+  <tabstop>filletType</tabstop>
   <tabstop>filletRadius</tabstop>
+  <tabstop>filletEndRadius</tabstop>
   <tabstop>checkBoxUseAllEdges</tabstop>
  </tabstops>
  <resources/>

@@ -26,6 +26,7 @@
 #include <functional>
 #include <initializer_list>
 #include <memory>
+#include <string>
 #include <vector>
 
 #include <QtCore/Qt>
@@ -120,6 +121,7 @@ public:
     void setDragLength(double dragLength);
     void setGeometryScale(float scale) override;
     SoLinearDraggerContainer* getDraggerContainer();
+    void setOriginLabel(const std::string& text);
     void setProperty(QuantitySpinBox* property);
     void setMultFactor(const double val);
     void setAddFactor(const double val);

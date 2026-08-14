@@ -264,6 +264,13 @@ SoLinearDraggerContainer* LinearGizmo::getDraggerContainer()
     return draggerContainer;
 }
 
+void LinearGizmo::setOriginLabel(const std::string& text)
+{
+    assert(draggerContainer && "Forgot to call GizmoContainer::initGizmos?");
+    draggerContainer->originLabelText = text.c_str();
+    draggerContainer->originLabelVisible = !text.empty();
+}
+
 void LinearGizmo::setProperty(QuantitySpinBox* property)
 {
     QuantitySpinBox::disconnect(quantityChangedConnection);
