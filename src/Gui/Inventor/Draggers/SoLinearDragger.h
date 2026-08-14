@@ -112,6 +112,9 @@ class GuiExport SoLinearDraggerContainer: public SoInteractionKit
     SO_KIT_HEADER(SoLinearDraggerContainer);
     SO_KIT_CATALOG_ENTRY_HEADER(draggerSwitch);
     SO_KIT_CATALOG_ENTRY_HEADER(transform);
+    SO_KIT_CATALOG_ENTRY_HEADER(originLabelSwitch);
+    SO_KIT_CATALOG_ENTRY_HEADER(originLabelPickStyle);
+    SO_KIT_CATALOG_ENTRY_HEADER(originLabel);
     SO_KIT_CATALOG_ENTRY_HEADER(dragger);
 
 public:
@@ -122,6 +125,8 @@ public:
     SoSFColor color;
     SoSFVec3f translation;
     SoSFBool visible;
+    SoSFString originLabelText;
+    SoSFBool originLabelVisible;
 
     SbVec3f getPointerDirection();
     void setPointerDirection(const SbVec3f& dir);

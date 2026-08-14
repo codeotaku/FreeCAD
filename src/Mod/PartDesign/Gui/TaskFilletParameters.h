@@ -25,6 +25,9 @@
 
 #pragma once
 
+#include <string>
+#include <unordered_map>
+
 #include <Gui/Inventor/Draggers/Gizmo.h>
 
 #include "TaskDressUpParameters.h"
@@ -52,25 +55,40 @@ public:
     void apply() override;
 
 private Q_SLOTS:
-    void onLengthChanged(double);
+    void onStartRadiusChanged(double value);
+    void onEndRadiusChanged(double value);
+    void onFilletTypeChanged(int index);
+    void onCurrentEdgeChanged(QListWidgetItem* current, QListWidgetItem* previous);
     void onRefDeleted() override;
     void onAddAllEdges();
     void onCheckBoxUseAllEdgesToggled(bool checked);
 
 protected:
-    double getLength() const;
     void setButtons(const selectionModes mode) override;
     void changeEvent(QEvent* e) override;
     void onSelectionChanged(const Gui::SelectionChanges& msg) override;
 
 private:
+    struct EdgeRadii
+    {
+        double start;
+        double end;
+    };
+
     std::unique_ptr<Ui_TaskFilletParameters> ui;
+    std::unordered_map<std::string, EdgeRadii> edgeRadii;
+    double defaultRadius = 1.0;
 
     std::unique_ptr<Gui::GizmoContainer> gizmoContainer;
     Gui::LinearGizmo* radiusGizmo = nullptr;
     Gui::LinearGizmo* radiusGizmo2 = nullptr;
     void setupGizmos(ViewProviderDressUp* vp);
     void setGizmoPositions();
+    void setRadiusControlsEnabled(bool enabled);
+    void updateRadiusTooltip(QListWidgetItem* item, const EdgeRadii& radii);
+    void updateFilletTypeUi();
+    bool isVariableRadius() const;
+    void ensureCurrentEdge();
 };
 
 /// simulation dialog for the TaskView
