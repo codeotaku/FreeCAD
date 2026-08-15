@@ -30,6 +30,7 @@
 #include <QMessageBox>
 #include <QSignalBlocker>
 #include <QTableWidget>
+#include <QTreeWidget>
 
 #include <algorithm>
 #include <cmath>
@@ -285,6 +286,7 @@ TaskFilletParameters::TaskFilletParameters(ViewProviderDressUp* DressUpView, QWi
     ui->checkBoxUseAllEdges->setChecked(useAllEdges);
     ui->buttonRefSel->setEnabled(!useAllEdges);
     ui->listWidgetReferences->setEnabled(!useAllEdges);
+    ui->treeWidgetReferences->setEnabled(!useAllEdges);
     double r = pcFillet->Radius.getValue();
     defaultRadius = r;
     ui->filletType->setCurrentIndex(pcFillet->RadiusMode.getValue());
@@ -298,6 +300,11 @@ TaskFilletParameters::TaskFilletParameters(ViewProviderDressUp* DressUpView, QWi
     ui->filletEndRadius->setUnit(Base::Unit::Length);
     ui->filletEndRadius->setValue(r);
     ui->filletEndRadius->setMinimum(0);
+
+    ui->treeWidgetReferences->header()->setSectionResizeMode(0, QHeaderView::Stretch);
+    ui->treeWidgetReferences->header()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
+    ui->treeWidgetReferences->header()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
+    ui->treeWidgetReferences->header()->setSectionResizeMode(3, QHeaderView::ResizeToContents);
 
     ui->controlPointTable->verticalHeader()->hide();
     ui->controlPointTable->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
@@ -349,9 +356,12 @@ TaskFilletParameters::TaskFilletParameters(ViewProviderDressUp* DressUpView, QWi
 
     // Create context menu
     createDeleteAction(ui->listWidgetReferences);
+    ui->treeWidgetReferences->addAction(deleteAction);
+    ui->treeWidgetReferences->setContextMenuPolicy(Qt::ActionsContextMenu);
     connect(deleteAction, &QAction::triggered, this, &TaskFilletParameters::onRefDeleted);
 
     createAddAllEdgesAction(ui->listWidgetReferences);
+    ui->treeWidgetReferences->addAction(addAllEdgesAction);
     connect(addAllEdgesAction, &QAction::triggered, this, &TaskFilletParameters::onAddAllEdges);
 
     connect(ui->listWidgetReferences, &QListWidget::currentItemChanged,
@@ -362,6 +372,16 @@ TaskFilletParameters::TaskFilletParameters(ViewProviderDressUp* DressUpView, QWi
         this, &TaskFilletParameters::setSelection);
     connect(ui->listWidgetReferences, &QListWidget::itemDoubleClicked,
         this, &TaskFilletParameters::doubleClicked);
+    connect(ui->listWidgetReferences, &QListWidget::currentItemChanged,
+        this, [this](QListWidgetItem* current) {
+            if (current) {
+                selectEdgeTreeItem(current->text());
+            }
+        });
+    connect(ui->treeWidgetReferences, &QTreeWidget::currentItemChanged,
+        this, [this](QTreeWidgetItem*, QTreeWidgetItem*) { syncEdgeTreeSelection(); });
+    connect(ui->treeWidgetReferences, &QTreeWidget::itemSelectionChanged,
+        this, &TaskFilletParameters::syncEdgeTreeSelection);
     // clang-format on
 
     if (strings.empty()) {
@@ -371,6 +391,7 @@ TaskFilletParameters::TaskFilletParameters(ViewProviderDressUp* DressUpView, QWi
         hideOnError();
     }
 
+    refreshEdgeTree();
     setupGizmos(DressUpView);
     updateFilletTypeUi();
     ensureCurrentEdge();
@@ -415,6 +436,7 @@ void TaskFilletParameters::onSelectionChanged(const Gui::SelectionChanges& msg)
                 edgeRadii.erase(subName);
                 ensureCurrentEdge();
             }
+            refreshEdgeTree();
         }
     }
     else if (msg.Type == Gui::SelectionChanges::ClrSelection) {
@@ -440,6 +462,7 @@ void TaskFilletParameters::onCheckBoxUseAllEdgesToggled(bool checked)
 
         ui->buttonRefSel->setEnabled(!checked);
         ui->listWidgetReferences->setEnabled(!checked);
+        ui->treeWidgetReferences->setEnabled(!checked);
         ui->controlPointTable->setEnabled(!checked);
         ui->addControlPointButton->setEnabled(
             !checked && isVariableRadius() && ui->listWidgetReferences->currentItem()
@@ -487,6 +510,7 @@ void TaskFilletParameters::onRefDeleted()
         edgeRadii.erase(ref);
     }
     ensureCurrentEdge();
+    refreshEdgeTree();
 }
 
 void TaskFilletParameters::onAddAllEdges()
@@ -506,6 +530,7 @@ void TaskFilletParameters::onAddAllEdges()
         edgeRadii.try_emplace(ref, EdgeRadii {defaultRadius, defaultRadius, {}});
     }
     ensureCurrentEdge();
+    refreshEdgeTree();
 }
 
 void TaskFilletParameters::onStartRadiusChanged(double value)
@@ -522,6 +547,7 @@ void TaskFilletParameters::onStartRadiusChanged(double value)
                     updateRadiusTooltip(item, found->second);
                 }
             }
+            refreshEdgeTree();
         }
         return;
     }
@@ -588,6 +614,7 @@ void TaskFilletParameters::onFilletTypeChanged(int index)
     }
     updateFilletTypeUi();
     ensureCurrentEdge();
+    refreshEdgeTree();
 }
 
 void TaskFilletParameters::onAddControlPointToggled(bool checked)
@@ -678,6 +705,7 @@ void TaskFilletParameters::changeEvent(QEvent* e)
         ui->retranslateUi(proxy);
         updateFilletTypeUi();
         ensureCurrentEdge();
+        refreshEdgeTree();
     }
 }
 
@@ -707,6 +735,138 @@ void TaskFilletParameters::clearGizmos()
     radiusGizmo2 = nullptr;
     controlPointRadiusGizmos.clear();
     controlPointPositionGizmos.clear();
+}
+
+void TaskFilletParameters::refreshEdgeTree()
+{
+    auto* fillet = getObject<PartDesign::Fillet>();
+    if (!fillet) {
+        return;
+    }
+
+    const QString currentEdge = ui->listWidgetReferences->currentItem()
+        ? ui->listWidgetReferences->currentItem()->text()
+        : QString();
+    QSignalBlocker blocker(ui->treeWidgetReferences);
+    ui->treeWidgetReferences->clear();
+
+    Part::TopoShape baseShape;
+    try {
+        baseShape = fillet->getBaseTopoShape(true);
+    }
+    catch (const Base::Exception&) {
+        return;
+    }
+    const auto refs = fillet->Base.getSubValues(true);
+
+    for (int row = 0; row < ui->listWidgetReferences->count(); ++row) {
+        const QString edgeText = ui->listWidgetReferences->item(row)->text();
+        auto* edgeItem = new QTreeWidgetItem(ui->treeWidgetReferences, {edgeText});
+        edgeItem->setExpanded(true);
+
+        double edgeLength = 0.0;
+        if (!baseShape.isNull() && static_cast<std::size_t>(row) < refs.size()) {
+            const Part::TopoShape edge = baseShape.getSubTopoShape(refs[row].c_str(), true);
+            if (!edge.isNull() && edge.shapeType() == TopAbs_EDGE) {
+                const auto frame = evaluateEdgePosition(TopoDS::Edge(edge.getShape()), 0.0);
+                if (frame) {
+                    edgeLength = frame->length;
+                }
+            }
+        }
+
+        const auto found = edgeRadii.find(edgeText.toStdString());
+        const EdgeRadii fallback {defaultRadius, defaultRadius, {}};
+        const EdgeRadii& radii = found != edgeRadii.end() ? found->second : fallback;
+        const auto appendPoint = [edgeItem, edgeLength](
+                                     const QString& label,
+                                     double position,
+                                     double radius
+                                 ) {
+            auto* point = new QTreeWidgetItem(edgeItem);
+            point->setText(0, label);
+            point->setText(
+                1,
+                QString::fromStdString(Base::Quantity(radius, Base::Unit::Length).getUserString())
+            );
+            point->setText(2, QString::fromStdString(Base::Quantity(position).getUserString()));
+            point->setText(
+                3,
+                QString::fromStdString(
+                    Base::Quantity(position * edgeLength, Base::Unit::Length).getUserString()
+                )
+            );
+        };
+
+        if (isVariableRadius()) {
+            appendPoint(tr("Start"), 0.0, radii.start);
+            for (std::size_t i = 0; i < radii.controlPoints.size(); ++i) {
+                appendPoint(
+                    tr("CP%1").arg(i + 1),
+                    radii.controlPoints[i].position,
+                    radii.controlPoints[i].radius
+                );
+            }
+            appendPoint(tr("End"), 1.0, radii.end);
+        }
+        else {
+            appendPoint(tr("Radius"), 0.0, fillet->Radius.getValue());
+        }
+
+        if (ui->listWidgetReferences->item(row)->isSelected()) {
+            edgeItem->setSelected(true);
+        }
+        if (edgeText == currentEdge) {
+            ui->treeWidgetReferences->setCurrentItem(edgeItem);
+        }
+    }
+}
+
+void TaskFilletParameters::selectEdgeTreeItem(const QString& edgeName)
+{
+    QSignalBlocker blocker(ui->treeWidgetReferences);
+    ui->treeWidgetReferences->clearSelection();
+    for (int row = 0; row < ui->treeWidgetReferences->topLevelItemCount(); ++row) {
+        auto* treeItem = ui->treeWidgetReferences->topLevelItem(row);
+        const auto matches = ui->listWidgetReferences->findItems(treeItem->text(0), Qt::MatchExactly);
+        if (!matches.empty() && matches.front()->isSelected()) {
+            treeItem->setSelected(true);
+        }
+        if (treeItem->text(0) == edgeName) {
+            ui->treeWidgetReferences->setCurrentItem(treeItem);
+        }
+    }
+}
+
+void TaskFilletParameters::syncEdgeTreeSelection()
+{
+    std::vector<QString> selectedEdges;
+    for (auto* item : ui->treeWidgetReferences->selectedItems()) {
+        auto* edgeItem = item->parent() ? item->parent() : item;
+        if (std::ranges::find(selectedEdges, edgeItem->text(0)) == selectedEdges.end()) {
+            selectedEdges.push_back(edgeItem->text(0));
+        }
+    }
+
+    auto* currentTreeItem = ui->treeWidgetReferences->currentItem();
+    if (currentTreeItem && currentTreeItem->parent()) {
+        currentTreeItem = currentTreeItem->parent();
+    }
+    QListWidgetItem* currentListItem = nullptr;
+    {
+        QSignalBlocker blocker(ui->listWidgetReferences);
+        ui->listWidgetReferences->clearSelection();
+        for (int row = 0; row < ui->listWidgetReferences->count(); ++row) {
+            auto* item = ui->listWidgetReferences->item(row);
+            item->setSelected(std::ranges::find(selectedEdges, item->text()) != selectedEdges.end());
+            if (currentTreeItem && item->text() == currentTreeItem->text(0)) {
+                currentListItem = item;
+            }
+        }
+    }
+    if (currentListItem && currentListItem != ui->listWidgetReferences->currentItem()) {
+        ui->listWidgetReferences->setCurrentItem(currentListItem);
+    }
 }
 
 void TaskFilletParameters::rebuildControlPointTable()
@@ -1236,6 +1396,7 @@ void TaskFilletParameters::syncCurrentRadiusLaw()
     fillet->setRadiusLaw(found->first, law);
     fillet->recomputeFeature();
     hideOnError();
+    refreshEdgeTree();
 }
 
 std::optional<Part::TopoShape> TaskFilletParameters::currentEdgeShape() const

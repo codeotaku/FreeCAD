@@ -6,7 +6,7 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>232</width>
+    <width>439</width>
     <height>390</height>
    </rect>
   </property>
@@ -28,10 +28,51 @@
     </widget>
    </item>
    <item>
-    <widget class="QListWidget" name="listWidgetReferences">
+    <widget class="QTreeWidget" name="treeWidgetReferences">
+     <property name="minimumSize">
+      <size>
+       <width>0</width>
+       <height>140</height>
+      </size>
+     </property>
      <property name="toolTip">
-      <string>- select an item to highlight it
-- double-click on an item to see the fillets</string>
+      <string>Select an edge to edit its variable-radius points.</string>
+     </property>
+     <property name="selectionMode">
+      <enum>QAbstractItemView::ExtendedSelection</enum>
+     </property>
+     <property name="rootIsDecorated">
+      <bool>true</bool>
+     </property>
+     <attribute name="headerVisible">
+      <bool>true</bool>
+     </attribute>
+     <column>
+      <property name="text">
+       <string>Element</string>
+      </property>
+     </column>
+     <column>
+      <property name="text">
+       <string>Radius</string>
+      </property>
+     </column>
+     <column>
+      <property name="text">
+       <string>Parameter</string>
+      </property>
+     </column>
+     <column>
+      <property name="text">
+       <string>Length</string>
+      </property>
+     </column>
+    </widget>
+   </item>
+   <item>
+    <widget class="QListWidget" name="listWidgetReferences">
+     <property name="visible">
+      <bool>false</bool>
      </property>
      <property name="selectionMode">
       <enum>QAbstractItemView::ExtendedSelection</enum>
@@ -240,7 +281,7 @@
  </customwidgets>
  <tabstops>
   <tabstop>buttonRefSel</tabstop>
-  <tabstop>listWidgetReferences</tabstop>
+  <tabstop>treeWidgetReferences</tabstop>
   <tabstop>filletType</tabstop>
   <tabstop>filletRadius</tabstop>
   <tabstop>filletEndRadius</tabstop>
