@@ -294,16 +294,47 @@ TaskFilletParameters::TaskFilletParameters(ViewProviderDressUp* DressUpView, QWi
     this->groupLayout()->addWidget(proxy);
 
     PartDesign::Fillet* pcFillet = DressUpView->getObject<PartDesign::Fillet>();
-    controlPointValuesChangedConnection = pcFillet->signalChanged.connect(
+    filletChangedConnection = pcFillet->signalChanged.connect(
         [this, pcFillet](const App::DocumentObject&, const App::Property& property) {
-            if (&property != &pcFillet->VariableRadiusControlPointValues
-                || controlPointRefreshQueued) {
+            const bool valuesChanged = &property == &pcFillet->VariableRadiusControlPointValues;
+            const bool expressionsChanged = &property == &pcFillet->ExpressionEngine;
+            const bool shapeChanged = &property == &pcFillet->Shape;
+            if (!valuesChanged && !expressionsChanged && !shapeChanged) {
+                return;
+            }
+            if (shapeChanged) {
+                const auto refs = pcFillet->Base.getSubValues();
+                if (refs.size() != static_cast<std::size_t>(ui->listWidgetReferences->count())) {
+                    return;
+                }
+                for (int row = 0; row < ui->listWidgetReferences->count(); ++row) {
+                    const auto index = static_cast<std::size_t>(row);
+                    if (refs[index] != ui->listWidgetReferences->item(row)->text().toStdString()) {
+                        return;
+                    }
+                }
+            }
+            controlPointValueRefreshRequested = controlPointValueRefreshRequested
+                || valuesChanged || expressionsChanged;
+            controlPointGeometryRefreshRequested
+                = controlPointGeometryRefreshRequested || shapeChanged;
+            if (controlPointRefreshQueued) {
                 return;
             }
             controlPointRefreshQueued = true;
             QMetaObject::invokeMethod(this, [this]() {
                 controlPointRefreshQueued = false;
-                refreshControlPointValuesFromModel();
+                const bool refreshValues = controlPointValueRefreshRequested;
+                const bool refreshGeometry = controlPointGeometryRefreshRequested;
+                controlPointValueRefreshRequested = false;
+                controlPointGeometryRefreshRequested = false;
+                if (refreshValues) {
+                    refreshControlPointValuesFromModel();
+                }
+                else if (refreshGeometry) {
+                    refreshControlPointLengthsFromGeometry();
+                    refreshEdgeTree();
+                }
                 setGizmoPositions();
             }, Qt::QueuedConnection);
         }
@@ -341,7 +372,8 @@ TaskFilletParameters::TaskFilletParameters(ViewProviderDressUp* DressUpView, QWi
 
     ui->controlPointTable->verticalHeader()->hide();
     ui->controlPointTable->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
-    ui->controlPointTable->horizontalHeader()->setSectionResizeMode(3, QHeaderView::ResizeToContents);
+    ui->controlPointTable->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
+    ui->controlPointTable->horizontalHeader()->setSectionResizeMode(4, QHeaderView::ResizeToContents);
     ui->controlPointTable->setSelectionMode(QAbstractItemView::NoSelection);
     ui->addControlPointButton->setIcon(Gui::BitmapFactory().iconFromTheme("list-add"));
     ui->addControlPointButton->setToolButtonStyle(Qt::ToolButtonIconOnly);
@@ -684,6 +716,7 @@ void TaskFilletParameters::onCurrentEdgeChanged(
         clearGizmos();
         ui->controlPointTable->setRowCount(0);
         controlPointPositionEditors.clear();
+        controlPointLengthEditors.clear();
         controlPointRadiusEditors.clear();
         return;
     }
@@ -701,6 +734,7 @@ void TaskFilletParameters::onCurrentEdgeChanged(
         clearGizmos();
         ui->controlPointTable->setRowCount(0);
         controlPointPositionEditors.clear();
+        controlPointLengthEditors.clear();
         controlPointRadiusEditors.clear();
         return;
     }
@@ -875,21 +909,37 @@ void TaskFilletParameters::refreshControlPointValuesFromModel()
         return;
     }
 
+    bool structureChanged = false;
     for (auto& [edgeName, radii] : edgeRadii) {
         const auto law = fillet->getRadiusLaw(edgeName);
         const auto ids = fillet->getRadiusControlPointIds(edgeName);
         if (law.size() < 2 || ids.size() + 2 != law.size()) {
             continue;
         }
-        radii.start = law.front().radius;
-        radii.end = law.back().radius;
-        for (std::size_t i = 0; i < ids.size(); ++i) {
-            const auto point = std::ranges::find(radii.controlPoints, ids[i], &ControlPoint::id);
-            if (point != radii.controlPoints.end()) {
-                point->position = law[i + 1].position;
-                point->radius = law[i + 1].radius;
+        bool edgeStructureChanged = radii.controlPoints.size() != ids.size();
+        if (!edgeStructureChanged) {
+            for (std::size_t i = 0; i < ids.size(); ++i) {
+                if (radii.controlPoints[i].id != ids[i]) {
+                    edgeStructureChanged = true;
+                    break;
+                }
             }
         }
+
+        radii.start = law.front().radius;
+        radii.end = law.back().radius;
+        std::vector<ControlPoint> refreshedPoints;
+        refreshedPoints.reserve(ids.size());
+        for (std::size_t i = 0; i < ids.size(); ++i) {
+            refreshedPoints.push_back({law[i + 1].position, law[i + 1].radius, ids[i]});
+        }
+        radii.controlPoints = std::move(refreshedPoints);
+        structureChanged = structureChanged || edgeStructureChanged;
+    }
+
+    if (structureChanged) {
+        rebuildControlPointTable();
+        rebuildAllGizmos();
     }
 
     for (auto& gizmo : controlPointGizmos) {
@@ -927,7 +977,37 @@ void TaskFilletParameters::refreshControlPointValuesFromModel()
             }
         }
     }
+    refreshControlPointLengthsFromGeometry();
     refreshEdgeTree();
+}
+
+void TaskFilletParameters::refreshControlPointLengthsFromGeometry()
+{
+    auto* current = ui->listWidgetReferences->currentItem();
+    if (!current) {
+        return;
+    }
+    const auto edge = edgeRadii.find(current->text().toStdString());
+    if (edge == edgeRadii.end()) {
+        return;
+    }
+
+    const double edgeLength = currentEdgeLength().value_or(0.0);
+    const bool hasValidEdgeLength = edgeLength > Precision::Confusion();
+    const std::size_t count = std::min(
+        edge->second.controlPoints.size(),
+        std::min(controlPointPositionEditors.size(), controlPointLengthEditors.size())
+    );
+    for (std::size_t i = 0; i < count; ++i) {
+        QSignalBlocker lengthBlocker(controlPointLengthEditors[i]);
+        controlPointLengthEditors[i]->setRange(0.0, edgeLength);
+        controlPointLengthEditors[i]->setValue(
+            edge->second.controlPoints[i].position * edgeLength
+        );
+        controlPointLengthEditors[i]->setEnabled(
+            hasValidEdgeLength && !controlPointPositionEditors[i]->hasExpression()
+        );
+    }
 }
 
 void TaskFilletParameters::activateEdge(const std::string& edgeName)
@@ -1001,6 +1081,7 @@ void TaskFilletParameters::syncEdgeTreeSelection()
 void TaskFilletParameters::rebuildControlPointTable()
 {
     controlPointPositionEditors.clear();
+    controlPointLengthEditors.clear();
     controlPointRadiusEditors.clear();
 
     auto* current = ui->listWidgetReferences->currentItem();
@@ -1012,6 +1093,8 @@ void TaskFilletParameters::rebuildControlPointTable()
     auto& points = edgeRadii[current->text().toStdString()].controlPoints;
     std::ranges::sort(points, {}, &ControlPoint::position);
     ui->controlPointTable->setRowCount(static_cast<int>(points.size()));
+    const double edgeLength = currentEdgeLength().value_or(0.0);
+    const bool hasValidEdgeLength = edgeLength > Precision::Confusion();
 
     for (std::size_t i = 0; i < points.size(); ++i) {
         auto* name = new QTableWidgetItem(tr("CP%1").arg(i + 1));
@@ -1040,12 +1123,28 @@ void TaskFilletParameters::rebuildControlPointTable()
         }
         ui->controlPointTable->setCellWidget(static_cast<int>(i), 1, positionEditor);
         controlPointPositionEditors.push_back(positionEditor);
+
+        auto* lengthEditor = new Gui::QuantitySpinBox(ui->controlPointTable);
+        lengthEditor->setUnit(Base::Unit::Length);
+        lengthEditor->setRange(0.0, edgeLength);
+        lengthEditor->setKeyboardTracking(false);
+        lengthEditor->setValue(points[i].position * edgeLength);
+        lengthEditor->setEnabled(hasValidEdgeLength && !positionEditor->hasExpression());
+        lengthEditor->setToolTip(tr("Distance from the start of the edge"));
+        ui->controlPointTable->setCellWidget(static_cast<int>(i), 2, lengthEditor);
+        controlPointLengthEditors.push_back(lengthEditor);
+
         connect(
             positionEditor,
             &Gui::QuantitySpinBox::showFormulaDialog,
             this,
-            [this](bool shown) {
+            [this, positionEditor, lengthEditor](bool shown) {
                 if (!shown) {
+                    const double currentLength = currentEdgeLength().value_or(0.0);
+                    lengthEditor->setEnabled(
+                        currentLength > Precision::Confusion()
+                        && !positionEditor->hasExpression()
+                    );
                     setGizmoPositions();
                 }
             }
@@ -1065,7 +1164,7 @@ void TaskFilletParameters::rebuildControlPointTable()
             ));
             radiusEditor->setAutoApply(true);
         }
-        ui->controlPointTable->setCellWidget(static_cast<int>(i), 2, radiusEditor);
+        ui->controlPointTable->setCellWidget(static_cast<int>(i), 3, radiusEditor);
         controlPointRadiusEditors.push_back(radiusEditor);
         connect(
             radiusEditor,
@@ -1084,7 +1183,7 @@ void TaskFilletParameters::rebuildControlPointTable()
         removeButton->setText(tr("Remove control point CP%1").arg(i + 1));
         removeButton->setToolButtonStyle(Qt::ToolButtonIconOnly);
         removeButton->setAutoRaise(true);
-        ui->controlPointTable->setCellWidget(static_cast<int>(i), 3, removeButton);
+        ui->controlPointTable->setCellWidget(static_cast<int>(i), 4, removeButton);
 
         connect(removeButton, &QToolButton::clicked, this, [this, id = points[i].id]() {
             auto* active = ui->listWidgetReferences->currentItem();
@@ -1102,7 +1201,7 @@ void TaskFilletParameters::rebuildControlPointTable()
             rebuildAllGizmos();
         });
 
-        connect(positionEditor, qOverload<double>(&Gui::QuantitySpinBox::valueChanged), this, [this, i, positionEditor](double value) {
+        const auto updatePosition = [this, i, positionEditor, lengthEditor](double value) {
             auto* active = ui->listWidgetReferences->currentItem();
             if (!active) {
                 return;
@@ -1116,15 +1215,19 @@ void TaskFilletParameters::rebuildControlPointTable()
             const double upper = i + 1 == activePoints.size()
                 ? 1.0 - controlPointTolerance
                 : activePoints[i + 1].position - controlPointTolerance;
-            if (lower > upper) {
-                QSignalBlocker blocker(positionEditor);
-                positionEditor->setValue(activePoints[i].position);
-                return;
-            }
-            const double clamped = std::clamp(value, lower, upper);
-            if (clamped != value) {
-                QSignalBlocker blocker(positionEditor);
+            const double clamped = lower <= upper
+                ? std::clamp(value, lower, upper)
+                : activePoints[i].position;
+            const double currentLength = currentEdgeLength().value_or(0.0);
+            {
+                QSignalBlocker positionBlocker(positionEditor);
+                QSignalBlocker lengthBlocker(lengthEditor);
                 positionEditor->setValue(clamped);
+                lengthEditor->setRange(0.0, currentLength);
+                lengthEditor->setValue(clamped * currentLength);
+            }
+            if (lower > upper) {
+                return;
             }
             activePoints[i].position = clamped;
             if (auto* fillet = getObject<PartDesign::Fillet>()) {
@@ -1137,7 +1240,25 @@ void TaskFilletParameters::rebuildControlPointTable()
             }
             syncCurrentRadiusLaw();
             setGizmoPositions();
-        });
+        };
+
+        connect(
+            positionEditor,
+            qOverload<double>(&Gui::QuantitySpinBox::valueChanged),
+            this,
+            updatePosition
+        );
+        connect(
+            lengthEditor,
+            qOverload<double>(&Gui::QuantitySpinBox::valueChanged),
+            this,
+            [this, updatePosition](double value) {
+                const double currentLength = currentEdgeLength().value_or(0.0);
+                if (currentLength > Precision::Confusion()) {
+                    updatePosition(value / currentLength);
+                }
+            }
+        );
 
         connect(radiusEditor, qOverload<double>(&Gui::QuantitySpinBox::valueChanged), this, [this, i](double value) {
             auto* active = ui->listWidgetReferences->currentItem();
@@ -1709,6 +1830,19 @@ std::optional<Part::TopoShape> TaskFilletParameters::currentEdgeShape() const
         return std::nullopt;
     }
     return edge;
+}
+
+std::optional<double> TaskFilletParameters::currentEdgeLength() const
+{
+    const auto edge = currentEdgeShape();
+    if (!edge) {
+        return std::nullopt;
+    }
+    const auto frame = evaluateEdgePosition(TopoDS::Edge(edge->getShape()), 0.0);
+    if (!frame) {
+        return std::nullopt;
+    }
+    return frame->length;
 }
 
 //**************************************************************************
