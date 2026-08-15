@@ -114,18 +114,40 @@ void SoDelayedAnnotationsElement::processDelayedPathsWithPriority(SoState* state
         [](const PriorityPath& a, const PriorityPath& b) { return a.priority < b.priority; }
     );
 
-    isProcessingDelayedPaths = true;
-
+    SoPathList sortedPaths;
     for (const auto& priorityPath : elt->paths) {
-        SoPathList singlePath;
-        singlePath.append(priorityPath.path);
+        sortedPaths.append(priorityPath.path);
+    }
+    elt->paths.clear();
 
+    class ProcessingStateGuard
+    {
+    public:
+        ProcessingStateGuard()
+            : previous(isProcessingDelayedPaths)
+        {
+            isProcessingDelayedPaths = Gui::Selection().isClarifySelectionActive();
+        }
+
+        ~ProcessingStateGuard()
+        {
+            isProcessingDelayedPaths = previous;
+        }
+
+        ProcessingStateGuard(const ProcessingStateGuard&) = delete;
+        ProcessingStateGuard(ProcessingStateGuard&&) = delete;
+        ProcessingStateGuard& operator=(const ProcessingStateGuard&) = delete;
+        ProcessingStateGuard& operator=(ProcessingStateGuard&&) = delete;
+
+    private:
+        bool previous;
+    } processingStateGuard;
+
+    for (int index = 0; index < sortedPaths.getLength(); ++index) {
+        SoPathList singlePath;
+        singlePath.append(sortedPaths[index]);
         action->apply(singlePath, TRUE);
     }
-
-    isProcessingDelayedPaths = false;
-
-    elt->paths.clear();
 }
 
 SO_NODE_SOURCE(So3DAnnotation);
@@ -135,6 +157,8 @@ bool So3DAnnotation::render = false;
 So3DAnnotation::So3DAnnotation()
 {
     SO_NODE_CONSTRUCTOR(So3DAnnotation);
+    SO_NODE_ADD_FIELD(priority, (0));
+    SO_NODE_ADD_FIELD(clearDepthBuffer, (false));
 }
 
 void So3DAnnotation::initClass()
@@ -161,22 +185,36 @@ void So3DAnnotation::GLRender(SoGLRenderAction* action)
 void So3DAnnotation::GLRenderBelowPath(SoGLRenderAction* action)
 {
     if (render) {
+        if (clearDepthBuffer.getValue()) {
+            glClear(GL_DEPTH_BUFFER_BIT);
+        }
         inherited::GLRenderBelowPath(action);
     }
     else {
         SoCacheElement::invalidate(action->getState());
-        SoDelayedAnnotationsElement::addDelayedPath(action->getState(), action->getCurPath()->copy());
+        SoDelayedAnnotationsElement::addDelayedPath(
+            action->getState(),
+            action->getCurPath()->copy(),
+            priority.getValue()
+        );
     }
 }
 
 void So3DAnnotation::GLRenderInPath(SoGLRenderAction* action)
 {
     if (render) {
+        if (clearDepthBuffer.getValue()) {
+            glClear(GL_DEPTH_BUFFER_BIT);
+        }
         inherited::GLRenderInPath(action);
     }
     else {
         SoCacheElement::invalidate(action->getState());
-        SoDelayedAnnotationsElement::addDelayedPath(action->getState(), action->getCurPath()->copy());
+        SoDelayedAnnotationsElement::addDelayedPath(
+            action->getState(),
+            action->getCurPath()->copy(),
+            priority.getValue()
+        );
     }
 }
 

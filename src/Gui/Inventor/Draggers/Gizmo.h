@@ -23,6 +23,7 @@
 
 #pragma once
 
+#include <functional>
 #include <initializer_list>
 #include <memory>
 #include <string>
@@ -113,6 +114,7 @@ public:
     void setGeometryScale(float scale) override;
     SoLinearDraggerContainer* getDraggerContainer();
     void setOriginLabel(const std::string& text);
+    void setActivationCallback(std::function<void()> callback);
     void setProperty(QuantitySpinBox* property);
     void setMultFactor(const double val);
     void setAddFactor(const double val);
@@ -123,6 +125,7 @@ private:
     SoLinearDraggerContainer* draggerContainer = nullptr;
     QMetaObject::Connection quantityChangedConnection;
     QMetaObject::Connection formulaDialogConnection;
+    std::function<void()> activationCallback;
 
     void draggingStarted();
     void draggingFinished();

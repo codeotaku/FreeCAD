@@ -3320,12 +3320,7 @@ void View3DInventorViewer::renderDelayedAnnotations(SoGLRenderAction* glra)
 
     glClear(GL_DEPTH_BUFFER_BIT);
 
-    if (Gui::Selection().isClarifySelectionActive()) {
-        Gui::SoDelayedAnnotationsElement::processDelayedPathsWithPriority(state, glra);
-    }
-    else {
-        glra->apply(Gui::SoDelayedAnnotationsElement::getDelayedPaths(state));
-    }
+    Gui::SoDelayedAnnotationsElement::processDelayedPathsWithPriority(state, glra);
 }
 
 void View3DInventorViewer::renderGLActionScene(const QColor& backgroundColor, SoGLRenderAction* glra)

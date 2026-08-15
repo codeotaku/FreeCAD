@@ -88,6 +88,16 @@ private:
         std::vector<ControlPoint> controlPoints;
     };
 
+    struct ControlPointGizmoSet
+    {
+        std::string edgeName;
+        std::string pointId;
+        Gui::LinearGizmo* radius = nullptr;
+        EdgePositionGizmo* position = nullptr;
+        Gui::QuantitySpinBox* positionEditor = nullptr;
+        Gui::QuantitySpinBox* radiusEditor = nullptr;
+    };
+
     std::unique_ptr<Ui_TaskFilletParameters> ui;
     std::unordered_map<std::string, EdgeRadii> edgeRadii;
     double defaultRadius = 1.0;
@@ -95,17 +105,22 @@ private:
     std::unique_ptr<Gui::GizmoContainer> gizmoContainer;
     Gui::LinearGizmo* radiusGizmo = nullptr;
     Gui::LinearGizmo* radiusGizmo2 = nullptr;
-    std::vector<Gui::LinearGizmo*> controlPointRadiusGizmos;
-    std::vector<EdgePositionGizmo*> controlPointPositionGizmos;
+    std::vector<ControlPointGizmoSet> controlPointGizmos;
+    std::vector<Gui::QuantitySpinBox*> auxiliaryControlPointEditors;
     std::vector<Gui::QuantitySpinBox*> controlPointPositionEditors;
     std::vector<Gui::QuantitySpinBox*> controlPointRadiusEditors;
+    fastsignals::scoped_connection controlPointValuesChangedConnection;
     bool addingControlPoint = false;
+    bool controlPointRefreshQueued = false;
 
     void setupGizmos(ViewProviderDressUp* vp);
     void clearGizmos();
+    void rebuildAllGizmos();
     void rebuildGizmos();
     void rebuildControlPointTable();
     void refreshEdgeTree();
+    void refreshControlPointValuesFromModel();
+    void activateEdge(const std::string& edgeName);
     void selectEdgeTreeItem(const QString& edgeName);
     void syncEdgeTreeSelection();
     void setGizmoPositions();
@@ -117,6 +132,7 @@ private:
     void setAddControlPointMode(bool enabled);
     bool addControlPointFromSelection(const Gui::SelectionChanges& msg);
     std::optional<Part::TopoShape> currentEdgeShape() const;
+    void syncRadiusLaw(const std::string& edgeName);
     void syncCurrentRadiusLaw();
 };
 

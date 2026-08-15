@@ -157,10 +157,16 @@ class EdgePositionGizmo: public Gui::Gizmo
 public:
     using Callback = std::function<void(double, bool)>;
 
-    EdgePositionGizmo(double position, double edgeLength, Callback callback)
+    EdgePositionGizmo(
+        double position,
+        double edgeLength,
+        Callback callback,
+        std::function<void()> activationCallback
+    )
         : position(position)
         , edgeLength(edgeLength)
         , callback(std::move(callback))
+        , activationCallback(std::move(activationCallback))
     {}
 
     SoInteractionKit* initDragger() override
@@ -215,11 +221,16 @@ public:
         container->visible = visible;
     }
 
+    bool isDragging() const
+    {
+        return dragging;
+    }
+
     void setPosition(double value, double length)
     {
         position = value;
         edgeLength = length;
-        if (dragger) {
+        if (dragger && !dragging) {
             dragger->translation = SbVec3f(0, 0, 0);
             dragger->translationIncrementCount = 0;
         }
@@ -229,6 +240,10 @@ private:
     static void startCallback(void* data, SoDragger*)
     {
         auto* self = static_cast<EdgePositionGizmo*>(data);
+        self->dragging = true;
+        if (self->activationCallback) {
+            self->activationCallback();
+        }
         self->dragStartPosition = self->position;
         self->dragger->translationIncrementCount = 0;
     }
@@ -240,7 +255,9 @@ private:
 
     static void finishCallback(void* data, SoDragger*)
     {
-        static_cast<EdgePositionGizmo*>(data)->update(true);
+        auto* self = static_cast<EdgePositionGizmo*>(data);
+        self->dragging = false;
+        self->update(true);
     }
 
     void update(bool finished)
@@ -261,7 +278,9 @@ private:
     double position;
     double dragStartPosition = 0.0;
     double edgeLength;
+    bool dragging = false;
     Callback callback;
+    std::function<void()> activationCallback;
 };
 }  // namespace PartDesignGui
 
@@ -275,6 +294,20 @@ TaskFilletParameters::TaskFilletParameters(ViewProviderDressUp* DressUpView, QWi
     this->groupLayout()->addWidget(proxy);
 
     PartDesign::Fillet* pcFillet = DressUpView->getObject<PartDesign::Fillet>();
+    controlPointValuesChangedConnection = pcFillet->signalChanged.connect(
+        [this, pcFillet](const App::DocumentObject&, const App::Property& property) {
+            if (&property != &pcFillet->VariableRadiusControlPointValues
+                || controlPointRefreshQueued) {
+                return;
+            }
+            controlPointRefreshQueued = true;
+            QMetaObject::invokeMethod(this, [this]() {
+                controlPointRefreshQueued = false;
+                refreshControlPointValuesFromModel();
+                setGizmoPositions();
+            }, Qt::QueuedConnection);
+        }
+    );
     const bool variableRadius = pcFillet->RadiusMode.getValue()
         == static_cast<int>(PartDesign::Fillet::RadiusModeValue::Variable);
     bool useAllEdges = pcFillet->UseAllEdges.getValue();
@@ -437,6 +470,7 @@ void TaskFilletParameters::onSelectionChanged(const Gui::SelectionChanges& msg)
                 ensureCurrentEdge();
             }
             refreshEdgeTree();
+            rebuildAllGizmos();
         }
     }
     else if (msg.Type == Gui::SelectionChanges::ClrSelection) {
@@ -511,6 +545,7 @@ void TaskFilletParameters::onRefDeleted()
     }
     ensureCurrentEdge();
     refreshEdgeTree();
+    rebuildAllGizmos();
 }
 
 void TaskFilletParameters::onAddAllEdges()
@@ -531,6 +566,7 @@ void TaskFilletParameters::onAddAllEdges()
     }
     ensureCurrentEdge();
     refreshEdgeTree();
+    rebuildAllGizmos();
 }
 
 void TaskFilletParameters::onStartRadiusChanged(double value)
@@ -684,6 +720,7 @@ void TaskFilletParameters::onCurrentEdgeChanged(
     setRadiusControlsEnabled(true);
     updateRadiusTooltip(current, radii);
     rebuildControlPointTable();
+    setGizmoPositions();
 }
 
 TaskFilletParameters::~TaskFilletParameters()
@@ -733,8 +770,17 @@ void TaskFilletParameters::clearGizmos()
     }
     radiusGizmo = nullptr;
     radiusGizmo2 = nullptr;
-    controlPointRadiusGizmos.clear();
-    controlPointPositionGizmos.clear();
+    controlPointGizmos.clear();
+    for (auto* editor : auxiliaryControlPointEditors) {
+        delete editor;
+    }
+    auxiliaryControlPointEditors.clear();
+}
+
+void TaskFilletParameters::rebuildAllGizmos()
+{
+    clearGizmos();
+    rebuildGizmos();
 }
 
 void TaskFilletParameters::refreshEdgeTree()
@@ -822,6 +868,89 @@ void TaskFilletParameters::refreshEdgeTree()
     }
 }
 
+void TaskFilletParameters::refreshControlPointValuesFromModel()
+{
+    auto* fillet = getObject<PartDesign::Fillet>();
+    if (!fillet) {
+        return;
+    }
+
+    for (auto& [edgeName, radii] : edgeRadii) {
+        const auto law = fillet->getRadiusLaw(edgeName);
+        const auto ids = fillet->getRadiusControlPointIds(edgeName);
+        if (law.size() < 2 || ids.size() + 2 != law.size()) {
+            continue;
+        }
+        radii.start = law.front().radius;
+        radii.end = law.back().radius;
+        for (std::size_t i = 0; i < ids.size(); ++i) {
+            const auto point = std::ranges::find(radii.controlPoints, ids[i], &ControlPoint::id);
+            if (point != radii.controlPoints.end()) {
+                point->position = law[i + 1].position;
+                point->radius = law[i + 1].radius;
+            }
+        }
+    }
+
+    for (auto& gizmo : controlPointGizmos) {
+        const auto edge = edgeRadii.find(gizmo.edgeName);
+        if (edge == edgeRadii.end()) {
+            continue;
+        }
+        const auto point = std::ranges::find(
+            edge->second.controlPoints,
+            gizmo.pointId,
+            &ControlPoint::id
+        );
+        if (point == edge->second.controlPoints.end()) {
+            continue;
+        }
+        QSignalBlocker positionBlocker(gizmo.positionEditor);
+        QSignalBlocker radiusBlocker(gizmo.radiusEditor);
+        gizmo.positionEditor->setValue(point->position);
+        gizmo.radiusEditor->setValue(point->radius);
+    }
+
+    auto* current = ui->listWidgetReferences->currentItem();
+    if (current) {
+        const auto edge = edgeRadii.find(current->text().toStdString());
+        if (edge != edgeRadii.end()) {
+            const std::size_t count = std::min(
+                edge->second.controlPoints.size(),
+                std::min(controlPointPositionEditors.size(), controlPointRadiusEditors.size())
+            );
+            for (std::size_t i = 0; i < count; ++i) {
+                QSignalBlocker positionBlocker(controlPointPositionEditors[i]);
+                QSignalBlocker radiusBlocker(controlPointRadiusEditors[i]);
+                controlPointPositionEditors[i]->setValue(edge->second.controlPoints[i].position);
+                controlPointRadiusEditors[i]->setValue(edge->second.controlPoints[i].radius);
+            }
+        }
+    }
+    refreshEdgeTree();
+}
+
+void TaskFilletParameters::activateEdge(const std::string& edgeName)
+{
+    const auto items = ui->listWidgetReferences->findItems(
+        QString::fromStdString(edgeName),
+        Qt::MatchExactly
+    );
+    if (items.empty()) {
+        return;
+    }
+    auto* previous = ui->listWidgetReferences->currentItem();
+    {
+        QSignalBlocker blocker(ui->listWidgetReferences);
+        ui->listWidgetReferences->setCurrentItem(items.front());
+        items.front()->setSelected(true);
+    }
+    if (items.front() != previous) {
+        onCurrentEdgeChanged(items.front(), previous);
+    }
+    selectEdgeTreeItem(items.front()->text());
+}
+
 void TaskFilletParameters::selectEdgeTreeItem(const QString& edgeName)
 {
     QSignalBlocker blocker(ui->treeWidgetReferences);
@@ -871,7 +1000,6 @@ void TaskFilletParameters::syncEdgeTreeSelection()
 
 void TaskFilletParameters::rebuildControlPointTable()
 {
-    clearGizmos();
     controlPointPositionEditors.clear();
     controlPointRadiusEditors.clear();
 
@@ -912,6 +1040,16 @@ void TaskFilletParameters::rebuildControlPointTable()
         }
         ui->controlPointTable->setCellWidget(static_cast<int>(i), 1, positionEditor);
         controlPointPositionEditors.push_back(positionEditor);
+        connect(
+            positionEditor,
+            &Gui::QuantitySpinBox::showFormulaDialog,
+            this,
+            [this](bool shown) {
+                if (!shown) {
+                    setGizmoPositions();
+                }
+            }
+        );
 
         auto* radiusEditor = new Gui::QuantitySpinBox(ui->controlPointTable);
         radiusEditor->setUnit(Base::Unit::Length);
@@ -929,6 +1067,16 @@ void TaskFilletParameters::rebuildControlPointTable()
         }
         ui->controlPointTable->setCellWidget(static_cast<int>(i), 2, radiusEditor);
         controlPointRadiusEditors.push_back(radiusEditor);
+        connect(
+            radiusEditor,
+            &Gui::QuantitySpinBox::showFormulaDialog,
+            this,
+            [this](bool shown) {
+                if (!shown) {
+                    setGizmoPositions();
+                }
+            }
+        );
 
         auto* removeButton = new QToolButton(ui->controlPointTable);
         removeButton->setIcon(Gui::BitmapFactory().iconFromTheme("list-remove"));
@@ -951,6 +1099,7 @@ void TaskFilletParameters::rebuildControlPointTable()
             activePoints.erase(found);
             syncCurrentRadiusLaw();
             rebuildControlPointTable();
+            rebuildAllGizmos();
         });
 
         connect(positionEditor, qOverload<double>(&Gui::QuantitySpinBox::valueChanged), this, [this, i, positionEditor](double value) {
@@ -1010,8 +1159,6 @@ void TaskFilletParameters::rebuildControlPointTable()
             }
         });
     }
-
-    rebuildGizmos();
 }
 
 void TaskFilletParameters::rebuildGizmos()
@@ -1027,69 +1174,156 @@ void TaskFilletParameters::rebuildGizmos()
     gizmos.push_back(radiusGizmo);
     gizmos.push_back(radiusGizmo2);
 
-    auto edge = currentEdgeShape();
-    double edgeLength = 1.0;
-    if (edge) {
-        auto frame = evaluateEdgePosition(TopoDS::Edge(edge->getShape()), 0.0);
-        if (frame) {
-            edgeLength = frame->length;
+    auto* fillet = getObject<PartDesign::Fillet>();
+    Part::TopoShape baseShape;
+    std::vector<std::string> refs;
+    if (fillet) {
+        try {
+            baseShape = fillet->getBaseTopoShape(true);
+            refs = fillet->Base.getSubValues(true);
+        }
+        catch (const Base::Exception&) {
+            baseShape = Part::TopoShape();
+            refs.clear();
         }
     }
 
-    for (std::size_t i = 0; i < controlPointRadiusEditors.size(); ++i) {
-        auto* radius = new Gui::LinearGizmo(controlPointRadiusEditors[i]);
-        controlPointRadiusGizmos.push_back(radius);
-        gizmos.push_back(radius);
+    for (int edgeRow = 0; edgeRow < ui->listWidgetReferences->count(); ++edgeRow) {
+        const std::string edgeName
+            = ui->listWidgetReferences->item(edgeRow)->text().toStdString();
+        auto found = edgeRadii.find(edgeName);
+        if (found == edgeRadii.end()) {
+            continue;
+        }
 
-        auto* active = ui->listWidgetReferences->currentItem();
-        const double position = active
-            ? edgeRadii[active->text().toStdString()].controlPoints[i].position
-            : 0.5;
-        auto* slider = new EdgePositionGizmo(
-            position,
-            edgeLength,
-            [this, i](double value, bool finished) {
-                auto* current = ui->listWidgetReferences->currentItem();
-                if (!current) {
-                    return;
-                }
-                auto& points = edgeRadii[current->text().toStdString()].controlPoints;
-                if (i >= points.size()) {
-                    return;
-                }
-                const double lower = i == 0 ? controlPointTolerance
-                                            : points[i - 1].position + controlPointTolerance;
-                const double upper = i + 1 == points.size()
-                    ? 1.0 - controlPointTolerance
-                    : points[i + 1].position - controlPointTolerance;
-                if (lower > upper) {
-                    return;
-                }
-                if (i < controlPointPositionEditors.size()
-                    && controlPointPositionEditors[i]->hasExpression()) {
-                    return;
-                }
-                points[i].position = std::clamp(value, lower, upper);
-                if (auto* fillet = getObject<PartDesign::Fillet>()) {
-                    fillet->setRadiusControlPointValue(
-                        current->text().toStdString(),
-                        points[i].id,
-                        PartDesign::Fillet::ControlPointComponent::Position,
-                        points[i].position
-                    );
-                }
-                if (i < controlPointPositionEditors.size()) {
-                    QSignalBlocker blocker(controlPointPositionEditors[i]);
-                    controlPointPositionEditors[i]->setValue(points[i].position);
-                }
-                if (finished) {
-                    syncCurrentRadiusLaw();
-                    setGizmoPositions();
+        double edgeLength = 1.0;
+        if (!baseShape.isNull() && static_cast<std::size_t>(edgeRow) < refs.size()) {
+            const Part::TopoShape edge = baseShape.getSubTopoShape(refs[edgeRow].c_str(), true);
+            if (!edge.isNull() && edge.shapeType() == TopAbs_EDGE) {
+                const auto frame = evaluateEdgePosition(TopoDS::Edge(edge.getShape()), 0.0);
+                if (frame) {
+                    edgeLength = frame->length;
                 }
             }
-        );
-        controlPointPositionGizmos.push_back(slider);
-        gizmos.push_back(slider);
+        }
+
+        auto& points = found->second.controlPoints;
+        for (std::size_t pointIndex = 0; pointIndex < points.size(); ++pointIndex) {
+            Gui::QuantitySpinBox* positionEditor = nullptr;
+            Gui::QuantitySpinBox* radiusEditor = nullptr;
+            if (fillet) {
+                positionEditor = new Gui::QuantitySpinBox(proxy);
+                positionEditor->setUnit(Base::Unit());
+                positionEditor->setRange(0.0, 1.0);
+                positionEditor->checkRangeInExpression(true);
+                positionEditor->setValue(points[pointIndex].position);
+                positionEditor->setVisible(false);
+                positionEditor->bind(fillet->ensureRadiusControlPointValue(
+                    edgeName,
+                    points[pointIndex].id,
+                    PartDesign::Fillet::ControlPointComponent::Position,
+                    points[pointIndex].position
+                ));
+                positionEditor->setAutoApply(true);
+                auxiliaryControlPointEditors.push_back(positionEditor);
+
+                radiusEditor = new Gui::QuantitySpinBox(proxy);
+                radiusEditor->setUnit(Base::Unit::Length);
+                radiusEditor->setMinimum(0.0);
+                radiusEditor->setValue(points[pointIndex].radius);
+                radiusEditor->setVisible(false);
+                connect(radiusEditor, qOverload<double>(&Gui::QuantitySpinBox::valueChanged), this,
+                    [this, edgeName, id = points[pointIndex].id](double value) {
+                        auto edge = edgeRadii.find(edgeName);
+                        if (edge == edgeRadii.end()) {
+                            return;
+                        }
+                        const auto point = std::ranges::find(
+                            edge->second.controlPoints,
+                            id,
+                            &ControlPoint::id
+                        );
+                        if (point == edge->second.controlPoints.end()) {
+                            return;
+                        }
+                        point->radius = value;
+                        if (auto* fillet = getObject<PartDesign::Fillet>()) {
+                            fillet->setRadiusControlPointValue(
+                                edgeName,
+                                id,
+                                PartDesign::Fillet::ControlPointComponent::Radius,
+                                value
+                            );
+                        }
+                        syncRadiusLaw(edgeName);
+                    });
+                radiusEditor->bind(fillet->ensureRadiusControlPointValue(
+                    edgeName,
+                    points[pointIndex].id,
+                    PartDesign::Fillet::ControlPointComponent::Radius,
+                    points[pointIndex].radius
+                ));
+                radiusEditor->setAutoApply(true);
+                auxiliaryControlPointEditors.push_back(radiusEditor);
+            }
+
+            if (!positionEditor || !radiusEditor) {
+                continue;
+            }
+
+            auto* radius = new Gui::LinearGizmo(radiusEditor);
+            radius->setActivationCallback([this, edgeName]() { activateEdge(edgeName); });
+            auto* slider = new EdgePositionGizmo(
+                points[pointIndex].position,
+                edgeLength,
+                [this, edgeName, id = points[pointIndex].id, positionEditor](
+                    double value,
+                    bool finished
+                ) {
+                    auto edge = edgeRadii.find(edgeName);
+                    if (edge == edgeRadii.end() || positionEditor->hasExpression()) {
+                        return;
+                    }
+                    auto point = std::ranges::find(edge->second.controlPoints, id, &ControlPoint::id);
+                    if (point == edge->second.controlPoints.end()) {
+                        return;
+                    }
+                    const std::size_t index = static_cast<std::size_t>(
+                        std::distance(edge->second.controlPoints.begin(), point)
+                    );
+                    const double lower = index == 0
+                        ? controlPointTolerance
+                        : edge->second.controlPoints[index - 1].position + controlPointTolerance;
+                    const double upper = index + 1 == edge->second.controlPoints.size()
+                        ? 1.0 - controlPointTolerance
+                        : edge->second.controlPoints[index + 1].position - controlPointTolerance;
+                    if (lower > upper) {
+                        return;
+                    }
+                    point->position = std::clamp(value, lower, upper);
+                    if (auto* fillet = getObject<PartDesign::Fillet>()) {
+                        fillet->setRadiusControlPointValue(
+                            edgeName,
+                            id,
+                            PartDesign::Fillet::ControlPointComponent::Position,
+                            point->position
+                        );
+                    }
+                    QSignalBlocker blocker(positionEditor);
+                    positionEditor->setValue(point->position);
+                    if (finished) {
+                        syncRadiusLaw(edgeName);
+                        setGizmoPositions();
+                    }
+                },
+                [this, edgeName]() { activateEdge(edgeName); }
+            );
+            controlPointGizmos.push_back(
+                {edgeName, points[pointIndex].id, radius, slider, positionEditor, radiusEditor}
+            );
+            gizmos.push_back(radius);
+            gizmos.push_back(slider);
+        }
     }
 
     if (gizmoContainer) {
@@ -1169,30 +1403,84 @@ void TaskFilletParameters::setGizmoPositions()
     radiusGizmo->setMultFactor(correction);
     radiusGizmo2->setMultFactor(correction);
 
-    const auto& points = edgeRadii[current->text().toStdString()].controlPoints;
-    const std::size_t count = std::min(
-        points.size(),
-        std::min(controlPointRadiusGizmos.size(), controlPointPositionGizmos.size())
-    );
-    for (std::size_t i = 0; i < count; ++i) {
-        auto frame = evaluateEdgePosition(TopoDS::Edge(edge.getShape()), points[i].position);
-        if (!frame) {
-            controlPointRadiusGizmos[i]->setVisibility(false);
-            controlPointPositionGizmos[i]->setVisibility(false);
+    for (auto& gizmo : controlPointGizmos) {
+        const auto listItems = ui->listWidgetReferences->findItems(
+            QString::fromStdString(gizmo.edgeName),
+            Qt::MatchExactly
+        );
+        if (listItems.empty()) {
+            gizmo.radius->setVisibility(false);
+            gizmo.position->setVisibility(false);
             continue;
         }
-        auto* radius = controlPointRadiusGizmos[i];
-        radius->Gizmo::setDraggerPlacement(frame->position, props1.dir);
-        radius->setMultFactor(correction);
-        radius->setOriginLabel(tr("CP%1").arg(i + 1).toStdString());
-        radius->setVisibility(isVariableRadius());
+        const int edgeRow = ui->listWidgetReferences->row(listItems.front());
+        if (edgeRow < 0 || static_cast<std::size_t>(edgeRow) >= refs.size()) {
+            gizmo.radius->setVisibility(false);
+            gizmo.position->setVisibility(false);
+            continue;
+        }
 
-        auto* slider = controlPointPositionGizmos[i];
-        slider->setPosition(points[i].position, frame->length);
-        slider->Gizmo::setDraggerPlacement(frame->position, frame->tangent);
-        const bool positionHasExpression = i < controlPointPositionEditors.size()
-            && controlPointPositionEditors[i]->hasExpression();
-        slider->setVisibility(isVariableRadius() && !positionHasExpression);
+        Part::TopoShape controlEdge
+            = baseShape.getSubTopoShape(refs[edgeRow].c_str(), true);
+        auto radii = edgeRadii.find(gizmo.edgeName);
+        if (controlEdge.isNull() || controlEdge.shapeType() != TopAbs_EDGE
+            || radii == edgeRadii.end()) {
+            gizmo.radius->setVisibility(false);
+            gizmo.position->setVisibility(false);
+            continue;
+        }
+        const auto point = std::ranges::find(
+            radii->second.controlPoints,
+            gizmo.pointId,
+            &ControlPoint::id
+        );
+        if (point == radii->second.controlPoints.end()) {
+            gizmo.radius->setVisibility(false);
+            gizmo.position->setVisibility(false);
+            continue;
+        }
+
+        const auto frame = evaluateEdgePosition(
+            TopoDS::Edge(controlEdge.getShape()),
+            point->position
+        );
+        if (!frame) {
+            gizmo.radius->setVisibility(false);
+            gizmo.position->setVisibility(false);
+            continue;
+        }
+
+        auto [controlFace1, controlFace2] = getAdjacentFacesFromEdge(controlEdge, baseShape);
+        const DraggerPlacementProps controlProps1
+            = getDraggerPlacementFromEdgeAndFace(controlEdge, controlFace1);
+        const DraggerPlacementProps controlProps2
+            = getDraggerPlacementFromEdgeAndFace(controlEdge, controlFace2);
+        const double controlAngle = controlProps1.dir.GetAngle(controlProps2.dir);
+        const double controlTangent = std::tan(controlAngle / 2.0);
+        const double controlCorrection = std::abs(controlTangent) > Precision::Angular()
+            ? 1.0 / controlTangent
+            : 1.0;
+        const std::size_t pointIndex = static_cast<std::size_t>(
+            std::distance(radii->second.controlPoints.begin(), point)
+        );
+
+        gizmo.radius->Gizmo::setDraggerPlacement(frame->position, controlProps1.dir);
+        gizmo.radius->setMultFactor(controlCorrection);
+        gizmo.radius->setOriginLabel(
+            tr("%1 CP%2")
+                .arg(QString::fromStdString(gizmo.edgeName))
+                .arg(pointIndex + 1)
+                .toStdString()
+        );
+        gizmo.radius->setVisibility(isVariableRadius());
+
+        if (!gizmo.position->isDragging()) {
+            gizmo.position->setPosition(point->position, frame->length);
+            gizmo.position->Gizmo::setDraggerPlacement(frame->position, frame->tangent);
+        }
+        gizmo.position->setVisibility(
+            isVariableRadius() && !gizmo.positionEditor->hasExpression()
+        );
     }
 }
 
@@ -1249,11 +1537,9 @@ void TaskFilletParameters::updateFilletTypeUi()
         radiusGizmo->setOriginLabel(variable ? tr("Start").toStdString() : std::string());
         radiusGizmo2->setOriginLabel(variable ? tr("End").toStdString() : std::string());
         radiusGizmo2->setVisibility(variable);
-        for (auto* gizmo : controlPointRadiusGizmos) {
-            gizmo->setVisibility(variable);
-        }
-        for (auto* gizmo : controlPointPositionGizmos) {
-            gizmo->setVisibility(variable);
+        for (auto& gizmo : controlPointGizmos) {
+            gizmo.radius->setVisibility(variable);
+            gizmo.position->setVisibility(variable && !gizmo.positionEditor->hasExpression());
         }
     }
     setGizmoPositions();
@@ -1370,21 +1656,18 @@ bool TaskFilletParameters::addControlPointFromSelection(const Gui::SelectionChan
     std::ranges::sort(points, {}, &ControlPoint::position);
     syncCurrentRadiusLaw();
     rebuildControlPointTable();
+    rebuildAllGizmos();
     return true;
 }
 
-void TaskFilletParameters::syncCurrentRadiusLaw()
+void TaskFilletParameters::syncRadiusLaw(const std::string& edgeName)
 {
     auto* fillet = getObject<PartDesign::Fillet>();
-    auto* current = ui->listWidgetReferences->currentItem();
-    if (!fillet || !current) {
+    const auto found = edgeRadii.find(edgeName);
+    if (!fillet || found == edgeRadii.end()) {
         return;
     }
 
-    const auto found = edgeRadii.find(current->text().toStdString());
-    if (found == edgeRadii.end()) {
-        return;
-    }
     Part::FilletRadiusLaw law {{0.0, found->second.start}};
     std::vector<std::string> ids;
     for (const auto& point : found->second.controlPoints) {
@@ -1397,6 +1680,14 @@ void TaskFilletParameters::syncCurrentRadiusLaw()
     fillet->recomputeFeature();
     hideOnError();
     refreshEdgeTree();
+}
+
+void TaskFilletParameters::syncCurrentRadiusLaw()
+{
+    auto* current = ui->listWidgetReferences->currentItem();
+    if (current) {
+        syncRadiusLaw(current->text().toStdString());
+    }
 }
 
 std::optional<Part::TopoShape> TaskFilletParameters::currentEdgeShape() const
