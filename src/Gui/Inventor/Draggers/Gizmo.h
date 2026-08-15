@@ -122,6 +122,7 @@ public:
     void setGeometryScale(float scale) override;
     SoLinearDraggerContainer* getDraggerContainer();
     void setOriginLabel(const std::string& text);
+    void setActivationCallback(std::function<void()> callback);
     void setProperty(QuantitySpinBox* property);
     void setMultFactor(const double val);
     void setAddFactor(const double val);
@@ -137,6 +138,7 @@ private:
     LinearDraggerStyle draggerStyle = LinearDraggerStyle::Arrow;
     bool hasDragged = false;
     ClickCallback clickCallback;
+    std::function<void()> activationCallback;
 
     void draggingStarted();
     void draggingFinished();

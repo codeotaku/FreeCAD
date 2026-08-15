@@ -26,6 +26,7 @@
 #include <cmath>
 #include <utility>
 #include <numbers>
+#include <limits>
 #include <QApplication>
 
 #include <Inventor/nodes/SoOrthographicCamera.h>
@@ -62,6 +63,8 @@ enum class DefaultDragBehavior
     Coarse = 0,
     Fine = 1,
 };
+
+constexpr int gizmoAnnotationPriority = std::numeric_limits<int>::max();
 
 Base::Reference<ParameterGrp> getGizmoParameterGroup()
 {
@@ -273,6 +276,11 @@ void LinearGizmo::setOriginLabel(const std::string& text)
     draggerContainer->originLabelVisible = !text.empty();
 }
 
+void LinearGizmo::setActivationCallback(std::function<void()> callback)
+{
+    activationCallback = std::move(callback);
+}
+
 void LinearGizmo::setProperty(QuantitySpinBox* property)
 {
     QuantitySpinBox::disconnect(quantityChangedConnection);
@@ -326,6 +334,9 @@ void LinearGizmo::setVisibility(bool visible)
 
 void LinearGizmo::draggingStarted()
 {
+    if (activationCallback) {
+        activationCallback();
+    }
     initialValue = property->value().getValue();
     hasDragged = false;
     dragger->translationIncrementCount.setValue(0);
@@ -758,6 +769,10 @@ GizmoContainer::GizmoContainer()
     SO_KIT_INIT_INSTANCE();
 
     SO_KIT_ADD_FIELD(visible, (1));
+
+    auto annotation = SO_GET_ANY_PART(this, "annotation", So3DAnnotation);
+    annotation->priority = gizmoAnnotationPriority;
+    annotation->clearDepthBuffer = true;
 
     auto pickStyle = SO_GET_ANY_PART(this, "pickStyle", SoPickStyle);
     pickStyle->style = SoPickStyle::SHAPE_ON_TOP;

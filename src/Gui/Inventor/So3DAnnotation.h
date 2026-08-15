@@ -25,6 +25,8 @@
 
 #include <Inventor/actions/SoGLRenderAction.h>
 #include <Inventor/nodes/SoSeparator.h>
+#include <Inventor/fields/SoSFBool.h>
+#include <Inventor/fields/SoSFInt32.h>
 #include <Inventor/elements/SoElement.h>
 #include <Inventor/elements/SoSubElement.h>
 #include <FCGlobal.h>
@@ -108,6 +110,9 @@ class GuiExport So3DAnnotation: public SoSeparator
 
 public:
     static bool render;
+
+    SoSFInt32 priority;
+    SoSFBool clearDepthBuffer;
 
     So3DAnnotation();
 
