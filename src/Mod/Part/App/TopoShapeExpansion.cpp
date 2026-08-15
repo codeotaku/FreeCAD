@@ -62,6 +62,8 @@
 #include <BRepFilletAPI_MakeChamfer.hxx>
 #include <BRepFilletAPI_MakeFillet.hxx>
 #include <BRepLib.hxx>
+#include <NCollection_Array1.hxx>
+#include <gp_Pnt2d.hxx>
 #include <BRepOffsetAPI_DraftAngle.hxx>
 #include <BRepOffsetAPI_MakeFilling.hxx>
 #include <BRepOffsetAPI_MakePipe.hxx>
@@ -4163,16 +4165,91 @@ TopoShape& TopoShape::makeElementFillet(
     if (edges.empty()) {
         FC_THROWM(NullShapeException, "Null input shape");
     }
+
+    // init the fillet generator
     BRepFilletAPI_MakeFillet mkFillet(shape.getShape());
+
     for (auto& e : edges) {
         if (e.isNull()) {
             FC_THROWM(NullShapeException, "Null input shape");
         }
+        // only edges that belong to the shape filter
         const auto& edge = e.getShape();
         if (!shape.findShape(edge)) {
             FC_THROWM(Base::CADKernelError, "edge does not belong to the shape");
         }
+
+        // add the edge to the fillet generator
         mkFillet.Add(radius1, radius2, TopoDS::Edge(edge));
+    }
+    return makeElementShape(mkFillet, shape, op);
+}
+
+TopoShape& TopoShape::makeElementFillet(
+    const TopoShape& shape,
+    const std::vector<TopoShape>& edges,
+    const std::vector<FilletRadiusLaw>& radiusLaws,
+    const char* op
+)
+{
+    if (!op) {
+        op = Part::OpCodes::Fillet;
+    }
+    if (shape.isNull()) {
+        FC_THROWM(NullShapeException, "Null shape");
+    }
+    if (edges.empty()) {
+        FC_THROWM(NullShapeException, "Null input shape");
+    }
+    if (edges.size() != radiusLaws.size()) {
+        FC_THROWM(Base::CADKernelError, "Fillet edge and radius-law counts do not match");
+    }
+
+    BRepFilletAPI_MakeFillet mkFillet(shape.getShape());
+    for (std::size_t edgeIndex = 0; edgeIndex < edges.size(); ++edgeIndex) {
+        const auto& edgeShape = edges[edgeIndex];
+        if (edgeShape.isNull()) {
+            FC_THROWM(NullShapeException, "Null input shape");
+        }
+        const auto& edge = edgeShape.getShape();
+        if (edge.ShapeType() != TopAbs_EDGE || !shape.findShape(edge)) {
+            FC_THROWM(Base::CADKernelError, "edge does not belong to the shape");
+        }
+
+        const auto& law = radiusLaws[edgeIndex];
+        if (law.size() < 2) {
+            FC_THROWM(Base::CADKernelError, "A variable fillet law requires at least two points");
+        }
+        if (!std::isfinite(law.front().position) || !std::isfinite(law.back().position)
+            || std::abs(law.front().position) > Precision::Confusion()
+            || std::abs(law.back().position - 1.0) > Precision::Confusion()) {
+            FC_THROWM(Base::CADKernelError, "A variable fillet law must start at 0 and end at 1");
+        }
+
+        NCollection_Array1<gp_Pnt2d> values(1, static_cast<Standard_Integer>(law.size()));
+        double previous = -1.0;
+        for (std::size_t pointIndex = 0; pointIndex < law.size(); ++pointIndex) {
+            const auto& point = law[pointIndex];
+            if (!std::isfinite(point.position) || point.position < 0.0 || point.position > 1.0
+                || point.position <= previous) {
+                FC_THROWM(
+                    Base::CADKernelError,
+                    "Variable fillet positions must be strictly increasing between 0 and 1"
+                );
+            }
+            if (!std::isfinite(point.radius) || point.radius <= 0.0) {
+                FC_THROWM(
+                    Base::CADKernelError,
+                    "Variable fillet radii must be finite and greater than zero"
+                );
+            }
+            values.SetValue(
+                static_cast<Standard_Integer>(pointIndex + 1),
+                gp_Pnt2d(point.position, point.radius)
+            );
+            previous = point.position;
+        }
+        mkFillet.Add(values, TopoDS::Edge(edge));
     }
     return makeElementShape(mkFillet, shape, op);
 }

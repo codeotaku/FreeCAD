@@ -22,7 +22,10 @@
  *                                                                         *
  ***************************************************************************/
 
+#include <cmath>
+#include <iomanip>
 #include <limits>
+#include <sstream>
 
 #include <BRepAlgo.hxx>
 #include <BRepFilletAPI_MakeFillet.hxx>
@@ -50,11 +53,23 @@ PROPERTY_SOURCE(PartDesign::Fillet, PartDesign::DressUp)
 const App::PropertyQuantityConstraint::Constraints floatRadius
     = {0.0, std::numeric_limits<float>::max(), 0.1};
 
+const char* radiusModeEnums[] = {"Constant Radius", "Variable Radius", nullptr};
+
 Fillet::Fillet()
 {
+    ADD_PROPERTY_TYPE(RadiusMode, (0L), "Fillet", App::Prop_None, "Fillet radius mode.");
+    RadiusMode.setEnums(radiusModeEnums);
+
     ADD_PROPERTY_TYPE(Radius, (1.0), "Fillet", App::Prop_None, "Fillet radius.");
     Radius.setUnit(Base::Unit::Length);
     Radius.setConstraints(&floatRadius);
+    ADD_PROPERTY_TYPE(
+        VariableRadiusData,
+        (std::map<std::string, std::string>()),
+        "Fillet",
+        App::Prop_Hidden,
+        "Per-edge variable-radius laws encoded as normalized-position/radius pairs."
+    );
     ADD_PROPERTY_TYPE(
         UseAllEdges,
         (false),
@@ -66,9 +81,53 @@ Fillet::Fillet()
     );
 }
 
+void Fillet::setRadiusLaw(const std::string& edgeName, const Part::FilletRadiusLaw& law)
+{
+    std::ostringstream stream;
+    stream << std::setprecision(std::numeric_limits<double>::max_digits10);
+    for (std::size_t i = 0; i < law.size(); ++i) {
+        if (i != 0) {
+            stream << ';';
+        }
+        stream << law[i].position << ',' << law[i].radius;
+    }
+    VariableRadiusData.setValue(edgeName, stream.str());
+}
+
+Part::FilletRadiusLaw Fillet::getRadiusLaw(const std::string& edgeName) const
+{
+    Part::FilletRadiusLaw law;
+    std::istringstream stream(VariableRadiusData.getValue(edgeName));
+    std::string point;
+    while (std::getline(stream, point, ';')) {
+        const auto separator = point.find(',');
+        if (separator == std::string::npos || point.find(',', separator + 1) != std::string::npos) {
+            return {};
+        }
+        try {
+            const std::string positionText = point.substr(0, separator);
+            const std::string radiusText = point.substr(separator + 1);
+            std::size_t positionLength = 0;
+            std::size_t radiusLength = 0;
+            const double position = std::stod(positionText, &positionLength);
+            const double radius = std::stod(radiusText, &radiusLength);
+            if (positionLength != positionText.size() || radiusLength != radiusText.size()
+                || !std::isfinite(position) || !std::isfinite(radius)) {
+                return {};
+            }
+            law.push_back({position, radius});
+        }
+        catch (const std::exception&) {
+            return {};
+        }
+    }
+    return law;
+}
+
 short Fillet::mustExecute() const
 {
-    if (Placement.isTouched() || Radius.isTouched()) {
+    if (Placement.isTouched() || RadiusMode.isTouched() || Radius.isTouched()
+        || VariableRadiusData.isTouched()) {
         return 1;
     }
     return DressUp::mustExecute();
@@ -90,19 +149,67 @@ App::DocumentObjectExecReturn* Fillet::execute()
     }
     baseShape.setTransform(Base::Matrix4D());
 
-    auto edges = UseAllEdges.getValue() ? baseShape.getSubTopoShapes(TopAbs_EDGE)
-                                        : getContinuousEdges(baseShape);
+    const bool variableRadius
+        = RadiusMode.getValue() == static_cast<int>(RadiusModeValue::Variable);
+    std::vector<TopoShape> edges;
+    std::vector<Part::FilletRadiusLaw> radiusLaws;
+
+    if (variableRadius) {
+        if (UseAllEdges.getValue()) {
+            return new App::DocumentObjectExecReturn(
+                QT_TRANSLATE_NOOP("Exception", "Variable-radius fillets require explicit edges")
+            );
+        }
+
+        const auto& storedRefs = Base.getSubValues();
+        const auto resolvedRefs = Base.getSubValues(true);
+        if (storedRefs.size() != resolvedRefs.size()) {
+            return new App::DocumentObjectExecReturn(
+                QT_TRANSLATE_NOOP("Exception", "Invalid variable-radius edge references")
+            );
+        }
+
+        const auto& storedLaws = VariableRadiusData.getValues();
+        for (std::size_t i = 0; i < storedRefs.size(); ++i) {
+            auto edge = baseShape.getSubTopoShape(resolvedRefs[i].c_str(), true);
+            if (edge.isNull() || edge.shapeType() != TopAbs_EDGE) {
+                return new App::DocumentObjectExecReturn(
+                    QT_TRANSLATE_NOOP(
+                        "Exception",
+                        "Variable-radius fillets require explicit edge selections"
+                    )
+                );
+            }
+
+            Part::FilletRadiusLaw law;
+            if (storedLaws.contains(storedRefs[i])) {
+                law = getRadiusLaw(storedRefs[i]);
+                if (law.empty()) {
+                    return new App::DocumentObjectExecReturn(
+                        QT_TRANSLATE_NOOP("Exception", "Invalid stored variable-radius law")
+                    );
+                }
+            }
+            else {
+                law = {{0.0, Radius.getValue()}, {1.0, Radius.getValue()}};
+            }
+            edges.push_back(std::move(edge));
+            radiusLaws.push_back(std::move(law));
+        }
+    }
+    else {
+        edges = UseAllEdges.getValue() ? baseShape.getSubTopoShapes(TopAbs_EDGE)
+                                       : getContinuousEdges(baseShape);
+        if (Radius.getValue() <= 0) {
+            return new App::DocumentObjectExecReturn(
+                QT_TRANSLATE_NOOP("Exception", "Fillet radius must be greater than zero")
+            );
+        }
+    }
+
     if (edges.empty()) {
         return new App::DocumentObjectExecReturn(
             QT_TRANSLATE_NOOP("Exception", "Fillet not possible on selected shapes")
-        );
-    }
-
-    double radius = Radius.getValue();
-
-    if (radius <= 0) {
-        return new App::DocumentObjectExecReturn(
-            QT_TRANSLATE_NOOP("Exception", "Fillet radius must be greater than zero")
         );
     }
 
@@ -116,7 +223,12 @@ App::DocumentObjectExecReturn* Fillet::execute()
         Base::SignalException se;
 #endif
 
-        shape.makeElementFillet(baseShape, edges, Radius.getValue(), Radius.getValue());
+        if (variableRadius) {
+            shape.makeElementFillet(baseShape, edges, radiusLaws);
+        }
+        else {
+            shape.makeElementFillet(baseShape, edges, Radius.getValue(), Radius.getValue());
+        }
         if (shape.isNull()) {
             return new App::DocumentObjectExecReturn(
                 QT_TRANSLATE_NOOP("Exception", "Resulting shape is null")

@@ -39,8 +39,27 @@ class PartDesignExport Fillet: public DressUp
 public:
     Fillet();
 
+    enum class RadiusModeValue
+    {
+        Constant,
+        Variable
+    };
+
+    App::PropertyEnumeration RadiusMode;
     App::PropertyQuantityConstraint Radius;
+    App::PropertyMap VariableRadiusData;
     App::PropertyBool UseAllEdges;
+
+    /** Persist a variable-radius law for a Base edge reference.
+     *
+     * Positions are relative parameters on the OCCT fillet spine in the range [0, 1]. The law is
+     * stored in VariableRadiusData so it survives document save/restore. Geometry validation is
+     * performed by TopoShape::makeElementFillet() when the feature executes.
+     */
+    void setRadiusLaw(const std::string& edgeName, const Part::FilletRadiusLaw& law);
+
+    /** Return the persisted law for an edge, or an empty law if no valid data is stored. */
+    Part::FilletRadiusLaw getRadiusLaw(const std::string& edgeName) const;
 
     /** @name methods override feature */
     //@{

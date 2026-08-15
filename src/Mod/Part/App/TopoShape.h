@@ -63,6 +63,14 @@ class TopoShape;
 class TopoShapeCache;
 using TopoShapeMap = std::unordered_map<TopoShape, TopoShape, ShapeHasher, ShapeHasher>;
 
+/** A relative spine position in [0, 1] and its variable-fillet radius. */
+struct FilletRadiusPoint
+{
+    double position;
+    double radius;
+};
+using FilletRadiusLaw = std::vector<FilletRadiusPoint>;
+
 /** Controls whether shape-making operations preserve mapped element names. */
 enum class ElementMapPolicy
 {
@@ -2311,6 +2319,20 @@ public:
         double radius2,
         const char* op = nullptr
     );
+
+    /** Make fillets with an independent variable-radius law for every edge.
+     *
+     * Each law is passed to OCCT as relative spine-position/radius pairs. It must contain at
+     * least two points, start at position 0, end at position 1, have strictly increasing
+     * normalized positions, and contain only finite, positive radii. The number of laws must
+     * match the number of edges.
+     */
+    TopoShape& makeElementFillet(
+        const TopoShape& source,
+        const std::vector<TopoShape>& edges,
+        const std::vector<FilletRadiusLaw>& radiusLaws,
+        const char* op = nullptr
+    );
     /* Make fillet shape
      *
      * @param source: the source shape
@@ -2330,6 +2352,15 @@ public:
     ) const
     {
         return TopoShape(0, Hasher).makeElementFillet(*this, edges, radius1, radius2, op);
+    }
+
+    TopoShape makeElementFillet(
+        const std::vector<TopoShape>& edges,
+        const std::vector<FilletRadiusLaw>& radiusLaws,
+        const char* op = nullptr
+    ) const
+    {
+        return TopoShape(0, Hasher).makeElementFillet(*this, edges, radiusLaws, op);
     }
 
     /* Make chamfer shape

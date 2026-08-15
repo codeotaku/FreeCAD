@@ -17,6 +17,8 @@
 #include <BRepBuilderAPI_MakePolygon.hxx>
 #include <BRepBuilderAPI_MakeWire.hxx>
 #include <BRepBuilderAPI_Transform.hxx>
+#include <limits>
+
 #include <BRepFeat_SplitShape.hxx>
 #include <BRepOffsetAPI_MakeEvolved.hxx>
 #include <BRepPrimAPI_MakeBox.hxx>
@@ -66,6 +68,46 @@ private:
     Data::ElementIDRefs _sid;
     App::StringHasherRef _hasher;
 };
+
+TEST_F(TopoShapeExpansionTest, makeElementFilletSupportsVariableRadiusLaw)
+{
+    TopoShape source {BRepPrimAPI_MakeBox(10.0, 10.0, 10.0).Shape()};
+    std::vector<TopoShape> edges {source.getSubTopoShape(TopAbs_EDGE, 1)};
+    std::vector<FilletRadiusLaw> laws {
+        {{0.0, 0.4}, {0.5, 1.0}, {1.0, 0.8}}
+    };
+
+    TopoShape result;
+    result.makeElementFillet(source, edges, laws);
+
+    EXPECT_FALSE(result.isNull());
+    EXPECT_TRUE(result.hasSubShape(TopAbs_SOLID));
+}
+
+TEST_F(TopoShapeExpansionTest, makeElementFilletRejectsInvalidVariableRadiusLaw)
+{
+    TopoShape source {BRepPrimAPI_MakeBox(10.0, 10.0, 10.0).Shape()};
+    std::vector<TopoShape> edges {source.getSubTopoShape(TopAbs_EDGE, 1)};
+    TopoShape result;
+
+    std::vector<FilletRadiusLaw> zeroRadius {
+        {{0.0, 0.5}, {0.5, 0.0}, {1.0, 0.5}}
+    };
+    EXPECT_THROW(result.makeElementFillet(source, edges, zeroRadius), Base::CADKernelError);
+
+    std::vector<FilletRadiusLaw> nonFinitePosition {
+        {{0.0, 0.5}, {std::numeric_limits<double>::quiet_NaN(), 1.0}, {1.0, 0.5}}
+    };
+    EXPECT_THROW(
+        result.makeElementFillet(source, edges, nonFinitePosition),
+        Base::CADKernelError
+    );
+
+    std::vector<FilletRadiusLaw> nonFiniteRadius {
+        {{0.0, 0.5}, {0.5, std::numeric_limits<double>::infinity()}, {1.0, 0.5}}
+    };
+    EXPECT_THROW(result.makeElementFillet(source, edges, nonFiniteRadius), Base::CADKernelError);
+}
 
 TEST_F(TopoShapeExpansionTest, makeElementCompoundOneShapeReturnsShape)
 {
