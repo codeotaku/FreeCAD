@@ -25,8 +25,13 @@
 
 #pragma once
 
+#include <string>
+#include <vector>
+
 #include <App/PropertyStandard.h>
 #include <App/PropertyUnits.h>
+#include <App/ObjectIdentifier.h>
+
 #include "FeatureDressUp.h"
 
 namespace PartDesign
@@ -48,6 +53,8 @@ public:
     App::PropertyEnumeration RadiusMode;
     App::PropertyQuantityConstraint Radius;
     App::PropertyMap VariableRadiusData;
+    App::PropertyMap VariableRadiusControlPointIds;
+    App::PropertyMap VariableRadiusControlPointValues;
     App::PropertyBool UseAllEdges;
 
     /** Persist a variable-radius law for a Base edge reference.
@@ -60,6 +67,32 @@ public:
 
     /** Return the persisted law for an edge, or an empty law if no valid data is stored. */
     Part::FilletRadiusLaw getRadiusLaw(const std::string& edgeName) const;
+
+    enum class ControlPointComponent
+    {
+        Position,
+        Radius
+    };
+
+    std::vector<std::string> getRadiusControlPointIds(const std::string& edgeName) const;
+    void setRadiusControlPointIds(
+        const std::string& edgeName,
+        const std::vector<std::string>& ids
+    );
+    std::string newRadiusControlPointId(const std::string& edgeName) const;
+    App::ObjectIdentifier ensureRadiusControlPointValue(
+        const std::string& edgeName,
+        const std::string& id,
+        ControlPointComponent component,
+        double value
+    );
+    void setRadiusControlPointValue(
+        const std::string& edgeName,
+        const std::string& id,
+        ControlPointComponent component,
+        double value
+    );
+    void clearRadiusControlPoints(const std::string& edgeName);
 
     /** @name methods override feature */
     //@{

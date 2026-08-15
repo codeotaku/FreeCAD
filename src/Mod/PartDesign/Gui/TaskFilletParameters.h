@@ -78,6 +78,7 @@ private:
     {
         double position;
         double radius;
+        std::string id;
     };
 
     struct EdgeRadii
@@ -96,6 +97,7 @@ private:
     Gui::LinearGizmo* radiusGizmo2 = nullptr;
     std::vector<Gui::LinearGizmo*> controlPointRadiusGizmos;
     std::vector<EdgePositionGizmo*> controlPointPositionGizmos;
+    std::vector<Gui::QuantitySpinBox*> controlPointPositionEditors;
     std::vector<Gui::QuantitySpinBox*> controlPointRadiusEditors;
     bool addingControlPoint = false;
 

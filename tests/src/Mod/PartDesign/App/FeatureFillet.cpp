@@ -10,6 +10,7 @@
 
 #include <App/Application.h>
 #include <App/Document.h>
+#include <App/ExpressionParser.h>
 #include <Mod/PartDesign/App/Body.h>
 #include <Mod/PartDesign/App/Feature.h>
 #include <Mod/PartDesign/App/FeatureFillet.h>
@@ -62,6 +63,61 @@ TEST_F(FeatureFilletTest, RadiusLawRoundTripsThroughTypedAccessors)
         EXPECT_DOUBLE_EQ(actual[i].position, expected[i].position);
         EXPECT_DOUBLE_EQ(actual[i].radius, expected[i].radius);
     }
+}
+
+TEST_F(FeatureFilletTest, ControlPointValuesSupportExpressions)
+{
+    fillet->setRadiusLaw("Edge1", {{0.0, 0.5}, {0.25, 1.0}, {1.0, 0.75}});
+    fillet->setRadiusControlPointIds("Edge1", {"cp1"});
+    const auto positionPath = fillet->ensureRadiusControlPointValue(
+        "Edge1",
+        "cp1",
+        PartDesign::Fillet::ControlPointComponent::Position,
+        0.25
+    );
+    const auto radiusPath = fillet->ensureRadiusControlPointValue(
+        "Edge1",
+        "cp1",
+        PartDesign::Fillet::ControlPointComponent::Radius,
+        1.0
+    );
+
+    fillet->setExpression(positionPath, App::ExpressionParser::parse(fillet, "1 / 3"));
+    fillet->setExpression(radiusPath, App::ExpressionParser::parse(fillet, "2.5 mm"));
+    document->recompute();
+
+    const auto law = fillet->getRadiusLaw("Edge1");
+    ASSERT_EQ(law.size(), 3);
+    EXPECT_DOUBLE_EQ(law[1].position, 1.0 / 3.0);
+    EXPECT_DOUBLE_EQ(law[1].radius, 2.5);
+}
+
+TEST_F(FeatureFilletTest, ControlPointExpressionsPersistAcrossDocumentSaveAndRestore)
+{
+    fillet->setRadiusLaw("Edge1", {{0.0, 0.5}, {0.25, 1.0}, {1.0, 0.75}});
+    fillet->setRadiusControlPointIds("Edge1", {"cp1"});
+    const auto radiusPath = fillet->ensureRadiusControlPointValue(
+        "Edge1",
+        "cp1",
+        PartDesign::Fillet::ControlPointComponent::Radius,
+        1.0
+    );
+    fillet->setExpression(radiusPath, App::ExpressionParser::parse(fillet, "2.5 mm"));
+
+    savedPath = std::filesystem::temp_directory_path() / (documentName + ".FCStd");
+    ASSERT_TRUE(document->saveAs(savedPath.string().c_str()));
+    App::GetApplication().closeDocument(document->getName());
+    document = nullptr;
+    fillet = nullptr;
+
+    document = App::GetApplication().openDocument(savedPath.string().c_str());
+    ASSERT_NE(document, nullptr);
+    fillet = dynamic_cast<PartDesign::Fillet*>(document->getObject("Fillet"));
+    ASSERT_NE(fillet, nullptr);
+
+    const auto law = fillet->getRadiusLaw("Edge1");
+    ASSERT_EQ(law.size(), 3);
+    EXPECT_DOUBLE_EQ(law[1].radius, 2.5);
 }
 
 TEST_F(FeatureFilletTest, RadiusLawPersistsAcrossDocumentSaveAndRestore)
