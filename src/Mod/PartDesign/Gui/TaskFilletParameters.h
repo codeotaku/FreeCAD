@@ -108,10 +108,13 @@ private:
     std::vector<ControlPointGizmoSet> controlPointGizmos;
     std::vector<Gui::QuantitySpinBox*> auxiliaryControlPointEditors;
     std::vector<Gui::QuantitySpinBox*> controlPointPositionEditors;
+    std::vector<Gui::QuantitySpinBox*> controlPointLengthEditors;
     std::vector<Gui::QuantitySpinBox*> controlPointRadiusEditors;
-    fastsignals::scoped_connection controlPointValuesChangedConnection;
+    fastsignals::scoped_connection filletChangedConnection;
     bool addingControlPoint = false;
     bool controlPointRefreshQueued = false;
+    bool controlPointValueRefreshRequested = false;
+    bool controlPointGeometryRefreshRequested = false;
 
     void setupGizmos(ViewProviderDressUp* vp);
     void clearGizmos();
@@ -120,6 +123,7 @@ private:
     void rebuildControlPointTable();
     void refreshEdgeTree();
     void refreshControlPointValuesFromModel();
+    void refreshControlPointLengthsFromGeometry();
     void activateEdge(const std::string& edgeName);
     void selectEdgeTreeItem(const QString& edgeName);
     void syncEdgeTreeSelection();
@@ -132,6 +136,7 @@ private:
     void setAddControlPointMode(bool enabled);
     bool addControlPointFromSelection(const Gui::SelectionChanges& msg);
     std::optional<Part::TopoShape> currentEdgeShape() const;
+    std::optional<double> currentEdgeLength() const;
     void syncRadiusLaw(const std::string& edgeName);
     void syncCurrentRadiusLaw();
 };
