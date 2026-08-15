@@ -7,7 +7,7 @@
     <x>0</x>
     <y>0</y>
     <width>232</width>
-    <height>270</height>
+    <height>390</height>
    </rect>
   </property>
   <property name="windowTitle">
@@ -68,7 +68,7 @@
    </item>
    <item>
     <layout class="QGridLayout" name="radiusLayout">
-     <item row="0" column="0" colspan="2">
+     <item row="0" column="0" colspan="3">
       <widget class="QLabel" name="activeEdgeLabel">
        <property name="font">
         <font>
@@ -80,37 +80,138 @@
        </property>
       </widget>
      </item>
-     <item row="1" column="0">
+     <item row="1" column="1">
+      <widget class="QLabel" name="positionHeaderLabel">
+       <property name="text">
+        <string>Position</string>
+       </property>
+      </widget>
+     </item>
+     <item row="1" column="2">
+      <widget class="QLabel" name="radiusHeaderLabel">
+       <property name="text">
+        <string>Radius</string>
+       </property>
+      </widget>
+     </item>
+     <item row="2" column="0">
       <widget class="QLabel" name="startRadiusLabel">
        <property name="text">
         <string>Start radius</string>
        </property>
       </widget>
      </item>
-     <item row="1" column="1">
+     <item row="2" column="1">
+      <widget class="QDoubleSpinBox" name="filletStartPosition">
+       <property name="enabled">
+        <bool>false</bool>
+       </property>
+       <property name="decimals">
+        <number>3</number>
+       </property>
+       <property name="maximum">
+        <double>1.000000000000000</double>
+       </property>
+      </widget>
+     </item>
+     <item row="2" column="2">
       <widget class="Gui::QuantitySpinBox" name="filletRadius">
        <property name="toolTip">
-        <string>UI prototype only; per-edge radius values are not yet applied to the fillet</string>
+        <string>Fillet radius at the start of the selected edge</string>
        </property>
        <property name="keyboardTracking">
         <bool>false</bool>
        </property>
       </widget>
      </item>
-     <item row="2" column="0">
+     <item row="3" column="0">
       <widget class="QLabel" name="endRadiusLabel">
        <property name="text">
         <string>End radius</string>
        </property>
       </widget>
      </item>
-     <item row="2" column="1">
+     <item row="3" column="1">
+      <widget class="QDoubleSpinBox" name="filletEndPosition">
+       <property name="enabled">
+        <bool>false</bool>
+       </property>
+       <property name="decimals">
+        <number>3</number>
+       </property>
+       <property name="maximum">
+        <double>1.000000000000000</double>
+       </property>
+       <property name="value">
+        <double>1.000000000000000</double>
+       </property>
+      </widget>
+     </item>
+     <item row="3" column="2">
       <widget class="Gui::QuantitySpinBox" name="filletEndRadius">
        <property name="toolTip">
-        <string>UI prototype only; per-edge radius values are not yet applied to the fillet</string>
+        <string>Fillet radius at the end of the selected edge</string>
        </property>
        <property name="keyboardTracking">
         <bool>false</bool>
+       </property>
+      </widget>
+     </item>
+    </layout>
+   </item>
+   <item>
+    <widget class="QTableWidget" name="controlPointTable">
+     <property name="minimumSize">
+      <size>
+       <width>0</width>
+       <height>92</height>
+      </size>
+     </property>
+     <property name="columnCount">
+      <number>3</number>
+     </property>
+     <column>
+      <property name="text">
+       <string>Point</string>
+      </property>
+     </column>
+     <column>
+      <property name="text">
+       <string>Position</string>
+      </property>
+     </column>
+     <column>
+      <property name="text">
+       <string>Radius</string>
+      </property>
+     </column>
+    </widget>
+   </item>
+   <item>
+    <layout class="QHBoxLayout" name="controlPointActionsLayout">
+     <item>
+      <spacer name="controlPointActionsSpacer">
+       <property name="orientation">
+        <enum>Qt::Horizontal</enum>
+       </property>
+       <property name="sizeHint" stdset="0">
+        <size>
+         <width>40</width>
+         <height>20</height>
+        </size>
+       </property>
+      </spacer>
+     </item>
+     <item>
+      <widget class="QToolButton" name="addControlPointButton">
+       <property name="toolTip">
+        <string>Add a control point by clicking the active edge</string>
+       </property>
+       <property name="text">
+        <string>Add control point</string>
+       </property>
+       <property name="checkable">
+        <bool>true</bool>
        </property>
       </widget>
      </item>
@@ -138,6 +239,8 @@
   <tabstop>filletType</tabstop>
   <tabstop>filletRadius</tabstop>
   <tabstop>filletEndRadius</tabstop>
+  <tabstop>controlPointTable</tabstop>
+  <tabstop>addControlPointButton</tabstop>
   <tabstop>checkBoxUseAllEdges</tabstop>
  </tabstops>
  <resources/>

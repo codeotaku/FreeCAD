@@ -25,8 +25,10 @@
 
 #pragma once
 
+#include <optional>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 #include <Gui/Inventor/Draggers/Gizmo.h>
 
@@ -44,6 +46,8 @@ class GizmoContainer;
 namespace PartDesignGui
 {
 
+class EdgePositionGizmo;
+
 class TaskFilletParameters: public TaskDressUpParameters
 {
     Q_OBJECT
@@ -58,6 +62,7 @@ private Q_SLOTS:
     void onStartRadiusChanged(double value);
     void onEndRadiusChanged(double value);
     void onFilletTypeChanged(int index);
+    void onAddControlPointToggled(bool checked);
     void onCurrentEdgeChanged(QListWidgetItem* current, QListWidgetItem* previous);
     void onRefDeleted() override;
     void onAddAllEdges();
@@ -69,10 +74,17 @@ protected:
     void onSelectionChanged(const Gui::SelectionChanges& msg) override;
 
 private:
+    struct ControlPoint
+    {
+        double position;
+        double radius;
+    };
+
     struct EdgeRadii
     {
         double start;
         double end;
+        std::vector<ControlPoint> controlPoints;
     };
 
     std::unique_ptr<Ui_TaskFilletParameters> ui;
@@ -82,13 +94,25 @@ private:
     std::unique_ptr<Gui::GizmoContainer> gizmoContainer;
     Gui::LinearGizmo* radiusGizmo = nullptr;
     Gui::LinearGizmo* radiusGizmo2 = nullptr;
+    std::vector<Gui::LinearGizmo*> controlPointRadiusGizmos;
+    std::vector<EdgePositionGizmo*> controlPointPositionGizmos;
+    std::vector<Gui::QuantitySpinBox*> controlPointRadiusEditors;
+    bool addingControlPoint = false;
+
     void setupGizmos(ViewProviderDressUp* vp);
+    void clearGizmos();
+    void rebuildGizmos();
+    void rebuildControlPointTable();
     void setGizmoPositions();
     void setRadiusControlsEnabled(bool enabled);
     void updateRadiusTooltip(QListWidgetItem* item, const EdgeRadii& radii);
     void updateFilletTypeUi();
     bool isVariableRadius() const;
     void ensureCurrentEdge();
+    void setAddControlPointMode(bool enabled);
+    bool addControlPointFromSelection(const Gui::SelectionChanges& msg);
+    std::optional<Part::TopoShape> currentEdgeShape() const;
+    void syncCurrentRadiusLaw();
 };
 
 /// simulation dialog for the TaskView

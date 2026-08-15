@@ -163,6 +163,8 @@ SoInteractionKit* LinearGizmo::initDragger()
 
 void LinearGizmo::uninitDragger()
 {
+    QuantitySpinBox::disconnect(quantityChangedConnection);
+    QuantitySpinBox::disconnect(formulaDialogConnection);
     dragger = nullptr;
     draggerContainer = nullptr;
 }
@@ -741,6 +743,12 @@ void GizmoContainer::uninitGizmos()
 {
     for (auto gizmo : gizmos) {
         gizmo->uninitDragger();
+    }
+
+    auto geometry = SO_GET_ANY_PART(this, "geometry", SoSeparator);
+    geometry->removeAllChildren();
+
+    for (auto gizmo : gizmos) {
         delete gizmo;
     }
     gizmos.clear();
@@ -754,6 +762,23 @@ void GizmoContainer::addGizmos(std::initializer_list<Gui::Gizmo*> gizmos)
         addGizmo(gizmo);
     }
     initGizmos();
+}
+
+void GizmoContainer::addGizmos(const std::vector<Gui::Gizmo*>& gizmos)
+{
+    assert(this->gizmos.size() == 0 && "Already called GizmoContainer::addGizmos?");
+
+    for (auto gizmo : gizmos) {
+        addGizmo(gizmo);
+    }
+    initGizmos();
+}
+
+void GizmoContainer::replaceGizmos(const std::vector<Gui::Gizmo*>& gizmos)
+{
+    uninitGizmos();
+    addGizmos(gizmos);
+    calculateScaleAndOrientation();
 }
 
 void GizmoContainer::addGizmo(Gizmo* gizmo)
@@ -875,6 +900,20 @@ bool GizmoContainer::isCoarseByDefault()
 
 std::unique_ptr<GizmoContainer> GizmoContainer::create(
     std::initializer_list<Gui::Gizmo*> gizmos,
+    ViewProviderDragger* vp
+)
+{
+    auto gizmoContainer = std::make_unique<GizmoContainer>();
+    gizmoContainer->addGizmos(gizmos);
+    gizmoContainer->viewProvider = vp;
+
+    vp->setGizmoContainer(gizmoContainer.get());
+
+    return gizmoContainer;
+}
+
+std::unique_ptr<GizmoContainer> GizmoContainer::create(
+    const std::vector<Gui::Gizmo*>& gizmos,
     ViewProviderDragger* vp
 )
 {

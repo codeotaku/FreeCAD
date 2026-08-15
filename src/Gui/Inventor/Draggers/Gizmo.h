@@ -237,6 +237,8 @@ public:
     }
     // This should be called only once after construction
     void addGizmos(std::initializer_list<Gui::Gizmo*> gizmos);
+    void addGizmos(const std::vector<Gui::Gizmo*>& gizmos);
+    void replaceGizmos(const std::vector<Gui::Gizmo*>& gizmos);
     void attachViewer(Gui::View3DInventorViewer* viewer, Base::Placement& origin);
     void setUpAutoScale(SoCamera* cameraIn);
     void calculateScaleAndOrientation();
@@ -254,6 +256,10 @@ public:
 
     static std::unique_ptr<GizmoContainer> create(
         std::initializer_list<Gui::Gizmo*> gizmos,
+        ViewProviderDragger* vp
+    );
+    static std::unique_ptr<GizmoContainer> create(
+        const std::vector<Gui::Gizmo*>& gizmos,
         ViewProviderDragger* vp
     );
 
