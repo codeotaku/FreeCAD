@@ -22,9 +22,11 @@
  *                                                                         *
  ***************************************************************************/
 
+#include <algorithm>
 #include <cmath>
 #include <iomanip>
 #include <limits>
+#include <optional>
 #include <sstream>
 
 #include <BRepAlgo.hxx>
@@ -39,7 +41,9 @@
 #include <ShapeFix_ShapeTolerance.hxx>
 
 #include <Base/Exception.h>
+#include <Base/Quantity.h>
 #include <Base/Reader.h>
+#include <App/ExpressionParser.h>
 #include <Mod/Part/App/TopoShape.h>
 
 #include "FeatureFillet.h"
@@ -55,6 +59,78 @@ const App::PropertyQuantityConstraint::Constraints floatRadius
 
 const char* radiusModeEnums[] = {"Constant Radius", "Variable Radius", nullptr};
 
+namespace
+{
+std::string controlPointValueKey(
+    const std::string& edgeName,
+    const std::string& id,
+    PartDesign::Fillet::ControlPointComponent component
+)
+{
+    return edgeName + '|' + id
+        + (component == PartDesign::Fillet::ControlPointComponent::Position ? "|position"
+                                                                           : "|radius");
+}
+
+std::string serializeNumber(double value)
+{
+    std::ostringstream stream;
+    stream << std::setprecision(std::numeric_limits<double>::max_digits10) << value;
+    return stream.str();
+}
+
+std::optional<double> controlPointValue(
+    const Base::Quantity& quantity,
+    PartDesign::Fillet::ControlPointComponent component
+)
+{
+    if (component == PartDesign::Fillet::ControlPointComponent::Position) {
+        if (!quantity.isDimensionless()) {
+            return std::nullopt;
+        }
+    }
+    else if (!quantity.isDimensionless() && quantity.getUnit() != Base::Unit::Length) {
+        return std::nullopt;
+    }
+    return quantity.getValue();
+}
+
+std::optional<double> parseControlPointValue(
+    const std::string& text,
+    PartDesign::Fillet::ControlPointComponent component
+)
+{
+    try {
+        return controlPointValue(Base::Quantity::parse(text), component);
+    }
+    catch (const Base::Exception&) {
+        return std::nullopt;
+    }
+}
+
+std::optional<double> resolveControlPointValue(
+    const PartDesign::Fillet& fillet,
+    const std::string& key,
+    const std::string& stored,
+    PartDesign::Fillet::ControlPointComponent component
+)
+{
+    const auto path = fillet.VariableRadiusControlPointValues.getItemPath(key);
+    const auto expression = fillet.getExpression(path).expression;
+    if (!expression) {
+        return parseControlPointValue(stored, component);
+    }
+    try {
+        const auto evaluated = expression->eval();
+        const auto* number = freecad_cast<App::NumberExpression*>(evaluated.get());
+        return number ? controlPointValue(number->getQuantity(), component) : std::nullopt;
+    }
+    catch (const Base::Exception&) {
+        return std::nullopt;
+    }
+}
+}  // namespace
+
 Fillet::Fillet()
 {
     ADD_PROPERTY_TYPE(RadiusMode, (0L), "Fillet", App::Prop_None, "Fillet radius mode.");
@@ -69,6 +145,20 @@ Fillet::Fillet()
         "Fillet",
         App::Prop_Hidden,
         "Per-edge variable-radius laws encoded as normalized-position/radius pairs."
+    );
+    ADD_PROPERTY_TYPE(
+        VariableRadiusControlPointIds,
+        (std::map<std::string, std::string>()),
+        "Fillet",
+        App::Prop_Hidden,
+        "Stable identifiers for variable-radius control points."
+    );
+    ADD_PROPERTY_TYPE(
+        VariableRadiusControlPointValues,
+        (std::map<std::string, std::string>()),
+        "Fillet",
+        App::Prop_Hidden,
+        "Expression-bindable variable-radius control-point values."
     );
     ADD_PROPERTY_TYPE(
         UseAllEdges,
@@ -121,13 +211,147 @@ Part::FilletRadiusLaw Fillet::getRadiusLaw(const std::string& edgeName) const
             return {};
         }
     }
+    const auto ids = getRadiusControlPointIds(edgeName);
+    if (ids.size() == (law.size() >= 2 ? law.size() - 2 : 0)) {
+        const auto& values = VariableRadiusControlPointValues.getValues();
+        for (std::size_t i = 0; i < ids.size(); ++i) {
+            const auto position = values.find(
+                controlPointValueKey(edgeName, ids[i], ControlPointComponent::Position)
+            );
+            const auto radius = values.find(
+                controlPointValueKey(edgeName, ids[i], ControlPointComponent::Radius)
+            );
+            if (position != values.end()) {
+                const auto parsed = resolveControlPointValue(
+                    *this,
+                    position->first,
+                    position->second,
+                    ControlPointComponent::Position
+                );
+                if (!parsed) {
+                    return {};
+                }
+                law[i + 1].position = *parsed;
+            }
+            if (radius != values.end()) {
+                const auto parsed = resolveControlPointValue(
+                    *this,
+                    radius->first,
+                    radius->second,
+                    ControlPointComponent::Radius
+                );
+                if (!parsed) {
+                    return {};
+                }
+                law[i + 1].radius = *parsed;
+            }
+        }
+    }
     return law;
+}
+
+std::vector<std::string> Fillet::getRadiusControlPointIds(const std::string& edgeName) const
+{
+    std::vector<std::string> ids;
+    std::istringstream stream(VariableRadiusControlPointIds.getValue(edgeName));
+    std::string id;
+    while (std::getline(stream, id, ';')) {
+        if (!id.empty()) {
+            ids.push_back(std::move(id));
+        }
+    }
+    return ids;
+}
+
+void Fillet::setRadiusControlPointIds(
+    const std::string& edgeName,
+    const std::vector<std::string>& ids
+)
+{
+    const auto previous = getRadiusControlPointIds(edgeName);
+    for (const auto& id : previous) {
+        if (std::ranges::find(ids, id) == ids.end()) {
+            VariableRadiusControlPointValues.deleteValue(
+                controlPointValueKey(edgeName, id, ControlPointComponent::Position)
+            );
+            VariableRadiusControlPointValues.deleteValue(
+                controlPointValueKey(edgeName, id, ControlPointComponent::Radius)
+            );
+        }
+    }
+
+    std::ostringstream stream;
+    for (std::size_t i = 0; i < ids.size(); ++i) {
+        if (i != 0) {
+            stream << ';';
+        }
+        stream << ids[i];
+    }
+    VariableRadiusControlPointIds.setValue(edgeName, stream.str());
+}
+
+std::string Fillet::newRadiusControlPointId(const std::string& edgeName) const
+{
+    unsigned long next = 1;
+    for (const auto& id : getRadiusControlPointIds(edgeName)) {
+        if (!id.starts_with("cp")) {
+            continue;
+        }
+        constexpr unsigned long decimalBase = 10;
+        unsigned long value = 0;
+        bool valid = id.size() > 2;
+        for (std::size_t i = 2; valid && i < id.size(); ++i) {
+            const char digit = id[i];
+            valid = digit >= '0' && digit <= '9';
+            if (valid) {
+                value = (value * decimalBase) + static_cast<unsigned long>(digit - '0');
+            }
+        }
+        if (valid) {
+            next = std::max(next, value + 1);
+        }
+    }
+    return "cp" + std::to_string(next);
+}
+
+App::ObjectIdentifier Fillet::ensureRadiusControlPointValue(
+    const std::string& edgeName,
+    const std::string& id,
+    ControlPointComponent component,
+    double value
+)
+{
+    const std::string key = controlPointValueKey(edgeName, id, component);
+    if (!VariableRadiusControlPointValues.getValues().contains(key)) {
+        VariableRadiusControlPointValues.setValue(key, serializeNumber(value));
+    }
+    return VariableRadiusControlPointValues.getItemPath(key);
+}
+
+void Fillet::setRadiusControlPointValue(
+    const std::string& edgeName,
+    const std::string& id,
+    ControlPointComponent component,
+    double value
+)
+{
+    VariableRadiusControlPointValues.setValue(
+        controlPointValueKey(edgeName, id, component),
+        serializeNumber(value)
+    );
+}
+
+void Fillet::clearRadiusControlPoints(const std::string& edgeName)
+{
+    setRadiusControlPointIds(edgeName, {});
+    VariableRadiusControlPointIds.deleteValue(edgeName);
 }
 
 short Fillet::mustExecute() const
 {
     if (Placement.isTouched() || RadiusMode.isTouched() || Radius.isTouched()
-        || VariableRadiusData.isTouched()) {
+        || VariableRadiusData.isTouched() || VariableRadiusControlPointIds.isTouched()
+        || VariableRadiusControlPointValues.isTouched()) {
         return 1;
     }
     return DressUp::mustExecute();
