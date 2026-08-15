@@ -105,6 +105,9 @@ private:
     void clearGizmos();
     void rebuildGizmos();
     void rebuildControlPointTable();
+    void refreshEdgeTree();
+    void selectEdgeTreeItem(const QString& edgeName);
+    void syncEdgeTreeSelection();
     void setGizmoPositions();
     void setRadiusControlsEnabled(bool enabled);
     void updateRadiusTooltip(QListWidgetItem* item, const EdgeRadii& radii);
