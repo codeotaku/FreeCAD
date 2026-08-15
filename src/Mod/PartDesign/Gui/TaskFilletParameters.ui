@@ -7,11 +7,17 @@
     <x>0</x>
     <y>0</y>
     <width>439</width>
-    <height>390</height>
+    <height>560</height>
    </rect>
   </property>
   <property name="windowTitle">
    <string notr="true">Form</string>
+  </property>
+  <property name="minimumSize">
+   <size>
+    <width>0</width>
+    <height>520</height>
+   </size>
   </property>
   <layout class="QVBoxLayout" name="verticalLayout">
    <item>
@@ -205,7 +211,7 @@
      <property name="minimumSize">
       <size>
        <width>0</width>
-       <height>92</height>
+       <height>132</height>
       </size>
      </property>
      <property name="columnCount">
