@@ -90,6 +90,10 @@ TEST_F(FeatureFilletTest, ControlPointValuesSupportExpressions)
     ASSERT_EQ(law.size(), 3);
     EXPECT_DOUBLE_EQ(law[1].position, 1.0 / 3.0);
     EXPECT_DOUBLE_EQ(law[1].radius, 2.5);
+
+    fillet->setRadiusControlPointIds("Edge1", {});
+    EXPECT_EQ(fillet->getExpression(positionPath).expression, nullptr);
+    EXPECT_EQ(fillet->getExpression(radiusPath).expression, nullptr);
 }
 
 TEST_F(FeatureFilletTest, ControlPointExpressionsPersistAcrossDocumentSaveAndRestore)

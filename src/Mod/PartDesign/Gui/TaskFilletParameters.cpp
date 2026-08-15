@@ -301,6 +301,7 @@ TaskFilletParameters::TaskFilletParameters(ViewProviderDressUp* DressUpView, QWi
 
     ui->controlPointTable->verticalHeader()->hide();
     ui->controlPointTable->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
+    ui->controlPointTable->horizontalHeader()->setSectionResizeMode(3, QHeaderView::ResizeToContents);
     ui->controlPointTable->setSelectionMode(QAbstractItemView::NoSelection);
     ui->addControlPointButton->setIcon(Gui::BitmapFactory().iconFromTheme("list-add"));
     ui->addControlPointButton->setToolButtonStyle(Qt::ToolButtonIconOnly);
@@ -768,6 +769,29 @@ void TaskFilletParameters::rebuildControlPointTable()
         }
         ui->controlPointTable->setCellWidget(static_cast<int>(i), 2, radiusEditor);
         controlPointRadiusEditors.push_back(radiusEditor);
+
+        auto* removeButton = new QToolButton(ui->controlPointTable);
+        removeButton->setIcon(Gui::BitmapFactory().iconFromTheme("list-remove"));
+        removeButton->setToolTip(tr("Remove control point CP%1").arg(i + 1));
+        removeButton->setText(tr("Remove control point CP%1").arg(i + 1));
+        removeButton->setToolButtonStyle(Qt::ToolButtonIconOnly);
+        removeButton->setAutoRaise(true);
+        ui->controlPointTable->setCellWidget(static_cast<int>(i), 3, removeButton);
+
+        connect(removeButton, &QToolButton::clicked, this, [this, id = points[i].id]() {
+            auto* active = ui->listWidgetReferences->currentItem();
+            if (!active) {
+                return;
+            }
+            auto& activePoints = edgeRadii[active->text().toStdString()].controlPoints;
+            const auto found = std::ranges::find(activePoints, id, &ControlPoint::id);
+            if (found == activePoints.end()) {
+                return;
+            }
+            activePoints.erase(found);
+            syncCurrentRadiusLaw();
+            rebuildControlPointTable();
+        });
 
         connect(positionEditor, qOverload<double>(&Gui::QuantitySpinBox::valueChanged), this, [this, i, positionEditor](double value) {
             auto* active = ui->listWidgetReferences->currentItem();
