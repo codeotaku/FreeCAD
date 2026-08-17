@@ -25,19 +25,28 @@
 
 #include <Mod/Part/App/FCBRepAlgoAPI_Cut.h>
 #include <Mod/Part/App/FCBRepAlgoAPI_Fuse.h>
+#include <BOPAlgo_ArgumentAnalyzer.hxx>
+#include <BRepAdaptor_Curve.hxx>
 #include <BRepBndLib.hxx>
+#include <BRepBuilderAPI_MakeEdge.hxx>
+#include <BRepBuilderAPI_Copy.hxx>
 #include <BRepBuilderAPI_Sewing.hxx>
 #include <BRepBuilderAPI_MakeSolid.hxx>
 #include <BRepBuilderAPI_MakeWire.hxx>
 #include <BRepClass3d_SolidClassifier.hxx>
 #include <BRepOffsetAPI_MakePipeShell.hxx>
+#include <BRep_Tool.hxx>
+#include <BRepTools_WireExplorer.hxx>
+#include <GCPnts_UniformAbscissa.hxx>
 #include <gp_Ax2.hxx>
 #include <Law_Function.hxx>
+#include <NCollection_List.hxx>
 #include <Precision.hxx>
 #include <ShapeAnalysis_FreeBounds.hxx>
 #include <TopExp.hxx>
 #include <TopExp_Explorer.hxx>
 #include <TopoDS.hxx>
+#include <TopoDS_Edge.hxx>
 #include <TopoDS_Wire.hxx>
 #include <TopTools_HSequenceOfShape.hxx>
 
@@ -62,6 +71,291 @@ const char* Pipe::TransitionEnums[] = {"Transformed", "Right corner", "Round cor
 const char* Pipe::ModeEnums[] = {"Standard", "Fixed", "Frenet", "Auxiliary", "Binormal", nullptr};
 const char* Pipe::TransformEnums[]
     = {"Constant", "Multisection", "Linear", "S-shape", "Interpolation", nullptr};
+
+namespace
+{
+// OCCT creates one side face for every (profile edge, spine edge) pair. This structure keeps
+// those faces grouped by spine edge for one profile wire, together with the section wire at each
+// end of the segment. A pipe with holes has one instance per profile wire.
+struct PipeShellSegmentHistory
+{
+    std::vector<std::vector<Part::TopoShape>> sideFacesBySegment;
+    std::vector<Part::TopoShape> sectionWires;
+
+    size_t segmentCount() const
+    {
+        return sideFacesBySegment.size();
+    }
+};
+
+// Wrap an OCCT-generated subshape while preserving the source TopoShape's tag and element map
+// to preserve topological naming.
+Part::TopoShape makeMappedSubShape(const Part::TopoShape& source, const TopoDS_Shape& shape)
+{
+    Part::TopoShape result(source);
+    result.setShape(shape, false);
+    return result;
+}
+
+Part::TopoShape splitPipePath(const Part::TopoShape& path, int segmentsPerEdge)
+{
+    BRepBuilderAPI_MakeWire wireMaker;
+    BRepTools_WireExplorer spine(TopoDS::Wire(path.getShape()));
+    for (; spine.More(); spine.Next()) {
+        const TopoDS_Edge& edge = spine.Current();
+        BRepAdaptor_Curve adaptor(edge);
+        GCPnts_UniformAbscissa split(adaptor, segmentsPerEdge + 1);
+        if (!split.IsDone() || split.NbPoints() != segmentsPerEdge + 1) {
+            return {};
+        }
+
+        double first;
+        double last;
+        const auto curve = BRep_Tool::Curve(edge, first, last);
+        if (curve.IsNull()) {
+            return {};
+        }
+
+        std::vector<TopoDS_Edge> pieces;
+        pieces.reserve(segmentsPerEdge);
+        for (int i = 1; i <= segmentsPerEdge; ++i) {
+            const double start = i == 1 ? first : split.Parameter(i);
+            const double end = i == segmentsPerEdge ? last : split.Parameter(i + 1);
+            BRepBuilderAPI_MakeEdge edgeMaker(curve, start, end);
+            if (!edgeMaker.IsDone()) {
+                return {};
+            }
+            pieces.push_back(edgeMaker.Edge());
+        }
+
+        if (edge.Orientation() == TopAbs_REVERSED) {
+            for (auto it = pieces.rbegin(); it != pieces.rend(); ++it) {
+                wireMaker.Add(TopoDS::Edge(it->Reversed()));
+            }
+        }
+        else {
+            for (const auto& piece : pieces) {
+                wireMaker.Add(piece);
+            }
+        }
+    }
+
+    if (!wireMaker.IsDone()) {
+        return {};
+    }
+    return makeMappedSubShape(path, wireMaker.Wire());
+}
+
+Part::TopoShape makeSectionWire(
+    const NCollection_List<TopoDS_Shape>& generated,
+    const Part::TopoShape& source
+)
+{
+    // OCCT reports the section at a spine vertex as generated subshapes rather than as a wire.
+    // Keep only its edges and inherit the completed shell's element map through source, so the
+    // reconstructed segment cap retains stable topological names.
+    std::vector<Part::TopoShape> edges;
+    for (const auto& shape : generated) {
+        if (shape.ShapeType() == TopAbs_EDGE) {
+            edges.push_back(makeMappedSubShape(source, shape));
+        }
+    }
+    if (edges.empty()) {
+        return {};
+    }
+
+    // Reassemble the individual section edges into the boundary used to cap a pipe segment.
+    // makeElementWires() returns a wire directly for one connected group, but a compound when
+    // the input contains disconnected groups.
+    Part::TopoShape wire(source);
+    wire.makeElementWires(edges);
+    if (wire.shapeType() == TopAbs_WIRE) {
+        return wire;
+    }
+
+    // Each history object represents one profile wire, so exactly one section wire is expected.
+    // Accept that wire if it is wrapped in a compound, but reject ambiguous multi-wire results.
+    if (wire.countSubShapes(TopAbs_WIRE) == 1) {
+        return wire.getSubTopoShape(TopAbs_WIRE, 1);
+    }
+    return {};
+}
+
+bool collectPipeShellSegmentHistory(
+    BRepOffsetAPI_MakePipeShell& maker,
+    const Part::TopoShape& path,
+    const Part::TopoShape& profile,
+    const Part::TopoShape& shell,
+    PipeShellSegmentHistory& history
+)
+{
+    // OCCT maps each spine edge directly to its generated faces and each spine vertex to the
+    // section edges at that junction. Retain that history while the MakePipeShell builder is alive.
+    history.sectionWires.push_back(makeMappedSubShape(profile, maker.FirstShape()));
+    if (history.sectionWires.back().isNull()) {
+        return false;
+    }
+
+    BRepTools_WireExplorer spine(TopoDS::Wire(path.getShape()));
+    for (; spine.More(); spine.Next()) {
+        if (history.segmentCount()) {
+            Part::TopoShape wire = makeSectionWire(maker.Generated(spine.CurrentVertex()), shell);
+            if (wire.isNull()) {
+                return false;
+            }
+            history.sectionWires.push_back(wire);
+        }
+
+        std::vector<Part::TopoShape> faces;
+        const auto& generated = maker.Generated(spine.Current());
+        for (const auto& shape : generated) {
+            if (shape.ShapeType() == TopAbs_FACE) {
+                faces.push_back(makeMappedSubShape(shell, shape));
+            }
+        }
+        if (faces.empty()) {
+            return false;
+        }
+        history.sideFacesBySegment.push_back(std::move(faces));
+    }
+
+    if (history.segmentCount() < 2) {
+        return false;
+    }
+
+    history.sectionWires.push_back(makeMappedSubShape(profile, maker.LastShape()));
+    return !history.sectionWires.back().isNull();
+}
+
+bool hasSelfIntersections(const TopoDS_Shape& shape)
+{
+    BOPAlgo_ArgumentAnalyzer checker;
+    checker.SetShape1(BRepBuilderAPI_Copy(shape).Shape());
+    checker.StopOnFirstFaulty() = true;
+    checker.SelfInterMode() = true;
+    checker.Perform();
+    return checker.HasFaulty();
+}
+
+Part::TopoShape makePipeSegmentSolid(
+    const std::vector<PipeShellSegmentHistory>& histories,
+    size_t segmentIndex,
+    App::StringHasherRef hasher
+)
+{
+    std::vector<Part::TopoShape> sideFaces;
+    std::vector<Part::TopoShape> startWires;
+    std::vector<Part::TopoShape> endWires;
+    for (const auto& history : histories) {
+        const auto& faces = history.sideFacesBySegment[segmentIndex];
+        sideFaces.insert(sideFaces.end(), faces.begin(), faces.end());
+        startWires.push_back(history.sectionWires[segmentIndex]);
+        endWires.push_back(history.sectionWires[segmentIndex + 1]);
+    }
+
+    // Cap and sew this segment independently. Unlike the complete self-crossing sweep, the
+    // resulting shell bounds an unambiguous solid that OCCT's Boolean operations can consume.
+    Part::TopoShape startFace(0, hasher);
+    Part::TopoShape endFace(0, hasher);
+    startFace.makeElementFace(startWires);
+    endFace.makeElementFace(endWires, Part::OpCodes::Sewing);
+
+    BRepBuilderAPI_Sewing sewer;
+    sewer.SetTolerance(Precision::Confusion());
+    for (const auto& face : sideFaces) {
+        sewer.Add(face.getShape());
+    }
+    sewer.Add(startFace.getShape());
+    sewer.Add(endFace.getShape());
+    sewer.Perform();
+
+    std::vector<Part::TopoShape> sources = sideFaces;
+    sources.push_back(startFace);
+    sources.push_back(endFace);
+    Part::TopoShape segment(0, hasher);
+    segment = segment
+                  .makeShapeWithElementMap(
+                      sewer.SewedShape(),
+                      Part::MapperSewing(sewer),
+                      sources,
+                      Part::OpCodes::Sewing
+                  )
+                  .makeElementSolid();
+
+    if (segment.shapeType() != TopAbs_SOLID || !segment.isValid()
+        || hasSelfIntersections(segment.getShape())) {
+        return {};
+    }
+
+    BRepClass3d_SolidClassifier classifier(segment.getShape());
+    classifier.PerformInfinitePoint(Precision::Confusion());
+    if (classifier.State() == TopAbs_IN) {
+        segment.setShape(segment.getShape().Reversed(), false);
+    }
+    return segment;
+}
+
+Part::TopoShape getSingleValidSolid(const Part::TopoShape& shape)
+{
+    if (shape.shapeType() == TopAbs_SOLID) {
+        if (shape.isValid() && !hasSelfIntersections(shape.getShape())) {
+            return shape;
+        }
+        return {};
+    }
+
+    auto solids = shape.getSubTopoShapes(TopAbs_SOLID);
+    if (solids.size() == 1 && solids.front().isValid()
+        && !hasSelfIntersections(solids.front().getShape())) {
+        return solids.front();
+    }
+    return {};
+}
+
+Part::TopoShape fusePipeSegments(
+    const std::vector<PipeShellSegmentHistory>& histories,
+    App::StringHasherRef hasher,
+    double fuzzyTolerance
+)
+{
+    try {
+        if (histories.empty()) {
+            return {};
+        }
+
+        const size_t segmentCount = histories.front().segmentCount();
+        for (const auto& history : histories) {
+            if (history.segmentCount() != segmentCount) {
+                return {};
+            }
+        }
+
+        // The complete shell has overlapping faces and cannot represent the intended tool. Fuse
+        // the valid per-spine-edge solids instead; the existing FreeCAD Boolean wrapper then
+        // resolves both adjacent and non-adjacent overlaps.
+        std::vector<Part::TopoShape> segmentSolids;
+        segmentSolids.reserve(segmentCount);
+        for (size_t i = 0; i < segmentCount; ++i) {
+            Part::TopoShape segment = makePipeSegmentSolid(histories, i, hasher);
+            if (segment.isNull()) {
+                return {};
+            }
+            segmentSolids.push_back(segment);
+        }
+
+        Part::TopoShape repaired(0, hasher);
+        repaired.makeElementFuse(segmentSolids, Part::OpCodes::Fuse, fuzzyTolerance);
+        return getSingleValidSolid(repaired);
+    }
+    catch (const Base::Exception&) {
+        return {};
+    }
+    catch (const Standard_Failure&) {
+        return {};
+    }
+    return {};
+}
+}  // namespace
 
 
 PROPERTY_SOURCE(PartDesign::Pipe, PartDesign::ProfileBased)
@@ -347,37 +641,45 @@ App::DocumentObjectExecReturn* Pipe::execute()
 
         // build all shells
         std::vector<Part::TopoShape> shells;
+        std::vector<PipeShellSegmentHistory> pipeShellSegmentHistory;
+        bool collectSegmentHistory = profilePoint.isNull();
 
         Part::TopoShape copyProfilePoint(profilePoint);
         if (!profilePoint.isNull()) {
             copyProfilePoint.move(invObjLoc);
         }
 
-        std::vector<Part::TopoShape> frontwires, backwires;
         for (auto& wires : wiresections) {
-            BRepOffsetAPI_MakePipeShell mkPS(TopoDS::Wire(path.getShape()));
-            setupAlgorithm(mkPS, auxpath.getShape());
+            for (auto& wire : wires) {
+                wire.move(invObjLoc);
+            }
+        }
 
+        auto configurePipeShell = [&](BRepOffsetAPI_MakePipeShell& maker,
+                                      const std::vector<Part::TopoShape>& wires) {
+            setupAlgorithm(maker, auxpath.getShape());
             if (!scalinglaw) {
                 if (!profilePoint.isNull()) {
-                    mkPS.Add(copyProfilePoint.getShape());
+                    maker.Add(copyProfilePoint.getShape());
                 }
-
-                for (auto& wire : wires) {
-                    wire.move(invObjLoc);
-                    mkPS.Add(wire.getShape());
+                for (const auto& wire : wires) {
+                    maker.Add(wire.getShape());
                 }
             }
             else {
                 if (!profilePoint.isNull()) {
-                    mkPS.SetLaw(copyProfilePoint.getShape(), scalinglaw);
+                    maker.SetLaw(copyProfilePoint.getShape(), scalinglaw);
                 }
-
-                for (auto& wire : wires) {
-                    wire.move(invObjLoc);
-                    mkPS.SetLaw(wire.getShape(), scalinglaw);
+                for (const auto& wire : wires) {
+                    maker.SetLaw(wire.getShape(), scalinglaw);
                 }
             }
+        };
+
+        std::vector<Part::TopoShape> frontwires, backwires;
+        for (auto& wires : wiresections) {
+            BRepOffsetAPI_MakePipeShell mkPS(TopoDS::Wire(path.getShape()));
+            configurePipeShell(mkPS, wires);
 
             if (!mkPS.IsReady()) {
                 return new App::DocumentObjectExecReturn(
@@ -388,6 +690,18 @@ App::DocumentObjectExecReturn* Pipe::execute()
             Part::TopoShape shell = Part::TopoShape(0, this->getDocument()->getStringHasher());
             shell.makeElementShape(mkPS, wires, Part::OpCodes::PipeShell);
             shells.push_back(shell);
+
+            if (collectSegmentHistory) {
+                PipeShellSegmentHistory history;
+                if (wires.empty()
+                    || !collectPipeShellSegmentHistory(mkPS, path, wires.front(), shell, history)) {
+                    collectSegmentHistory = false;
+                    pipeShellSegmentHistory.clear();
+                }
+                else {
+                    pipeShellSegmentHistory.push_back(std::move(history));
+                }
+            }
 
             if (!shell.isClosed()) {
                 // shell is not closed - use simulate to get the end wires
@@ -420,6 +734,31 @@ App::DocumentObjectExecReturn* Pipe::execute()
                 }
             }
         }
+
+        auto collectRepairHistory = [&](const Part::TopoShape& repairPath,
+                                        std::vector<PipeShellSegmentHistory>& histories) {
+            histories.clear();
+            for (const auto& wires : wiresections) {
+                if (wires.empty()) {
+                    return false;
+                }
+
+                BRepOffsetAPI_MakePipeShell maker(TopoDS::Wire(repairPath.getShape()));
+                configurePipeShell(maker, wires);
+                if (!maker.IsReady()) {
+                    return false;
+                }
+
+                Part::TopoShape shell(0, hasher);
+                shell.makeElementShape(maker, wires, Part::OpCodes::PipeShell);
+                PipeShellSegmentHistory history;
+                if (!collectPipeShellSegmentHistory(maker, repairPath, wires.front(), shell, history)) {
+                    return false;
+                }
+                histories.push_back(std::move(history));
+            }
+            return !histories.empty();
+        };
 
         Part::TopoShape result(0, getDocument()->getStringHasher());
 
@@ -513,11 +852,47 @@ App::DocumentObjectExecReturn* Pipe::execute()
             }
         }
 
-        AddSubShape.setValue(result.makeElementCompound(
-            shapes,
-            nullptr,
-            Part::TopoShape::SingleShapeCompoundCreationPolicy::returnShape
-        ));
+        // A completed sweep can contain a self-crossing shell. Detect that case after the normal
+        // sweep is complete, then replace it with the union of its valid per-spine-edge solids.
+        // Non-self-intersecting pipes stay on the existing fast path.
+        if (hasSelfIntersections(result.getShape())) {
+            Part::TopoShape repaired;
+            if (collectSegmentHistory && pipeShellSegmentHistory.size() == shells.size()) {
+                repaired = fusePipeSegments(pipeShellSegmentHistory, hasher, FuzzyTolerance.getValue());
+            }
+            // A curved spine edge can overlap itself before OCCT creates another topological edge.
+            // Subdivide the exact curves until every swept segment is suitable for Boolean fusion.
+            for (int segmentsPerEdge = 2;
+                 repaired.isNull() && profilePoint.isNull() && segmentsPerEdge <= 64;
+                 segmentsPerEdge *= 2) {
+                Part::TopoShape repairPath = splitPipePath(path, segmentsPerEdge);
+                if (repairPath.isNull()) {
+                    break;
+                }
+                std::vector<PipeShellSegmentHistory> histories;
+                if (!collectRepairHistory(repairPath, histories)) {
+                    continue;
+                }
+                repaired = fusePipeSegments(histories, hasher, FuzzyTolerance.getValue());
+            }
+            if (repaired.isNull()) {
+                return new App::DocumentObjectExecReturn(
+                    QT_TRANSLATE_NOOP("Exception", "Pipe: Failed to repair self-intersecting sweep")
+                );
+            }
+            result = repaired;
+            shapes = {repaired};
+        }
+
+        // Do not use result itself as the makeElementCompound() target. In the repaired case that
+        // would replace the valid solid with a compound before it reaches the final Boolean cut.
+        if (shapes.size() == 1) {
+            AddSubShape.setValue(shapes.front());
+        }
+        else {
+            Part::TopoShape addSubShape(0, hasher);
+            AddSubShape.setValue(addSubShape.makeElementCompound(shapes));
+        }
 
         if (shapes.size() > 1) {
             result.makeElementFuse(shapes);
