@@ -896,6 +896,8 @@ void prepareProfileBased(
     std::function<void(Part::Feature*, App::DocumentObject*)> func
 )
 {
+    const bool isLoft = which == "AdditiveLoft" || which == "SubtractiveLoft";
+
     auto base_worker = [=](App::DocumentObject* feature, const std::vector<std::string>& subs) {
         if (!feature || !feature->isDerivedFrom<Part::Feature>()) {
             return;
@@ -921,10 +923,14 @@ void prepareProfileBased(
         // we construct our command.
         auto ProfileFeature = freecad_cast<PartDesign::ProfileBased*>(Feat);
 
-        std::vector<std::string>& cmdSubs = const_cast<vector<std::string>&>(subs);
-        if (subs.size() == 0) {
+        std::vector<std::string> profileSubs = subs;
+        if (subs.empty()) {
             importExternalElements(ProfileFeature->Profile, {feature});
-            cmdSubs = ProfileFeature->Profile.getSubValues();
+            profileSubs = ProfileFeature->Profile.getSubValues();
+        }
+        if (isLoft && profileSubs.size() > 1) {
+            // The first selected subelement is the profile; the others are sections.
+            profileSubs.resize(1);
         }
         // run the command in console to set the profile (without selected subelements)
         auto runProfileCmd = [=]() {
@@ -935,13 +941,13 @@ void prepareProfileBased(
         // useful to set, say, a face of a solid as the "profile"
         auto runProfileCmdWithSubs = [=]() {
             std::ostringstream ss;
-            for (auto& s : cmdSubs) {
-                ss << "'" << s << "',";
+            for (const auto& sub : profileSubs) {
+                ss << "'" << sub << "',";
             }
             FCMD_OBJ_CMD(Feat, "Profile = (" << objCmd << ", [" << ss.str() << "])");
         };
 
-        if (which.compare("AdditiveLoft") == 0 || which.compare("SubtractiveLoft") == 0) {
+        if (isLoft) {
             // for additive and subtractive lofts set subvalues even for sketches
             // when a vertex is first selected
             auto subName = subs.empty() ? "" : subs.front();
@@ -956,26 +962,22 @@ void prepareProfileBased(
                 runProfileCmdWithSubs();
             }
 
-            // for additive and subtractive lofts allow the user to preselect the sections
-            std::vector<Gui::SelectionObject> selection = cmd->getSelection().getSelectionEx();
-            if (selection.size() > 1) {  // treat additional selected objects as sections
-                for (std::vector<Gui::SelectionObject>::size_type ii = 1; ii < selection.size();
-                     ii++) {
-                    // Add subvalues even for sketches in case we just want points
-                    auto objCmdSection = Gui::Command::getObjectCmd(selection[ii].getObject());
-                    const auto& subnames = selection[ii].getSubNames();
-                    std::ostringstream ss;
-                    if (!subnames.empty()) {
-                        for (auto& s : subnames) {
-                            ss << "'" << s << "',";
-                        }
-                    }
-                    else {
-                        // an empty string indicates the whole object
-                        ss << "''";
-                    }
-                    FCMD_OBJ_CMD(Feat, "Sections += [(" << objCmdSection << ", [" << ss.str() << "])]");
-                }
+            // SelectionObject groups selected subelements by object. Use the first
+            // subelement of the profile object as the profile and the rest as a section.
+            App::PropertyLinkSubList sections;
+            if (subs.size() > 1) {
+                sections.addValue(feature, std::vector<std::string>(subs.begin() + 1, subs.end()));
+            }
+
+            // Treat additional selected objects as sections. Keep subvalues so selected
+            // sketch points can be used as sections.
+            auto selection = cmd->getSelection().getSelectionEx();
+            for (std::size_t i = 1; i < selection.size(); ++i) {
+                sections.addValue(selection[i].getObject(), selection[i].getSubNames());
+            }
+
+            if (sections.getSize() > 0) {
+                FCMD_OBJ_CMD(Feat, "Sections = " << sections.getPyReprString());
             }
         }
         else if (which.compare("AdditivePipe") == 0 || which.compare("SubtractivePipe") == 0) {

@@ -260,6 +260,39 @@ class PartDesignGuiTestCases(unittest.TestCase):
         self.assertEqual(len(self.BodySource.Group), 0, "Source body feature count is wrong")
         self.assertEqual(len(self.BodyTarget.Group), 2, "Target body feature count is wrong")
 
+    def testLoftPreselectedFacesFromSameObject(self):
+        """Preselected faces from one object become the profile and section."""
+        body = self.Doc.addObject("PartDesign::Body", "Body")
+        body.AllowCompound = True
+        source = body.newObject("PartDesign::Feature", "Source")
+        source.Shape = Part.makeCompound(
+            [
+                Part.makePlane(10, 10, App.Vector(0, 0, 0)),
+                Part.makePlane(10, 10, App.Vector(0, 0, 10)),
+            ]
+        )
+        self.Doc.recompute()
+
+        Gui.activateWorkbench("PartDesignWorkbench")
+        Gui.activateView("Gui::View3DInventor", True)
+        Gui.activeView().setActiveObject("pdbody", body)
+        Gui.Selection.clearSelection()
+        Gui.Selection.addSelection(source, "Face1")
+        Gui.Selection.addSelection(source, "Face2")
+
+        try:
+            Gui.runCommand("PartDesign_AdditiveLoft")
+            loft = self.Doc.getObject("AdditiveLoft")
+            self.assertIsNotNone(loft)
+            self.assertEqual(loft.Profile, (source, ["Face1"]))
+            self.assertEqual(loft.Sections, [(source, ("Face2",))])
+            self.Doc.recompute()
+            self.assertFalse(loft.Shape.isNull())
+            self.assertTrue(loft.Shape.isValid())
+        finally:
+            Gui.Control.closeDialog()
+            Gui.Selection.clearSelection()
+
     def tearDown(self):
         FreeCAD.closeDocument("SketchGuiTest")
 
