@@ -24,6 +24,10 @@
 from __future__ import division
 from math import pi
 import unittest
+import os
+import tempfile
+import xml.etree.ElementTree as ET
+import zipfile
 
 import FreeCAD
 
@@ -120,7 +124,132 @@ class TestFillet(unittest.TestCase):
         if followup.Base[0]:
             self.assertNotEqual(followup.Base[0].Name, box.Name)
 
+    def _open_legacy_fillet(self, directory, refs, use_all, old_float=False):
+        FreeCAD.closeDocument(self.Doc.Name)
+        self.Doc = FreeCAD.newDocument("PartDesignTestFillet")
+        _body, box, fillet = self._create_box_with_fillet()
+        fillet.Base = (box, refs)
+        fillet.UseAllEdges = use_all
+        self.Doc.recompute()
+        volume = fillet.Shape.Volume
+        current = os.path.join(directory, "current.FCStd")
+        legacy = os.path.join(directory, "PartDesignTestFillet.FCStd")
+        self.Doc.saveAs(current)
+        # Simulate the old file schema, including pre-QuantityConstraint radii.
+        new_properties = {
+            "RadiusMode",
+            "RadiusLawModes",
+            "VariableRadiusData",
+            "VariableRadiusControlPointIds",
+            "VariableRadiusControlPointValues",
+        }
+        with zipfile.ZipFile(current) as source, zipfile.ZipFile(legacy, "w") as target:
+            for entry in source.infolist():
+                data = source.read(entry.filename)
+                if entry.filename == "Document.xml":
+                    root = ET.fromstring(data)
+                    for props in root.iter("Properties"):
+                        removed = 0
+                        for prop in list(props):
+                            if prop.get("name") in new_properties:
+                                props.remove(prop)
+                                removed += 1
+                            elif old_float and prop.get("name") == "Radius":
+                                prop.set("type", "App::PropertyFloatConstraint")
+                        props.set("Count", str(int(props.get("Count")) - removed))
+                    data = ET.tostring(root, encoding="utf-8", xml_declaration=True)
+                target.writestr(entry, data)
+        FreeCAD.closeDocument(self.Doc.Name)
+        self.Doc = FreeCAD.openDocument(legacy)
+        fillet = self.Doc.getObject("Fillet")
+        fillet.touch()
+        self.Doc.recompute()
+        self.assertEqual(fillet.RadiusMode, "Constant Radius")
+        self.assertEqual(list(fillet.Base[1]), refs)
+        self.assertEqual(fillet.UseAllEdges, use_all)
+        self.assertTrue(fillet.isValid())
+        self.assertAlmostEqual(fillet.Shape.Volume, volume)
+        return fillet
+
+    def testLegacyUniformFilletSaveRestore(self):
+        with tempfile.TemporaryDirectory() as directory:
+            for refs, use_all, old_float in [
+                (["Edge1"], False, False),
+                (["Face1"], False, False),
+                ([""], True, False),
+                (["Face50"], True, False),
+                (["Edge1"], False, True),
+            ]:
+                with self.subTest(refs=refs, use_all=use_all, old_float=old_float):
+                    fillet = self._open_legacy_fillet(directory, refs, use_all, old_float)
+                    volume = fillet.Shape.Volume
+                    self.Doc.save()
+                    self.Doc.restore()
+                    self.Doc.getObject("Fillet").touch()
+                    self.Doc.recompute()
+                    self.assertAlmostEqual(self.Doc.getObject("Fillet").Shape.Volume, volume)
+
+    @unittest.skipUnless(FreeCAD.GuiUp, "Requires the native task panel")
+    def testLegacyUniformFilletUsesCurrentTaskPanel(self):
+        import FreeCADGui as Gui
+        from PySide import QtCore, QtWidgets
+
+        def settle():
+            loop = QtCore.QEventLoop()
+            QtCore.QTimer.singleShot(100, loop.quit)
+            loop.exec()
+
+        Gui.activateWorkbench("PartDesignWorkbench")
+        window = Gui.getMainWindow()
+        with tempfile.TemporaryDirectory() as directory:
+            for refs in ([""], ["Face50"]):
+                with self.subTest(refs=refs):
+                    fillet = self._open_legacy_fillet(directory, refs, True)
+                    for accept in (False, True):
+                        self.Doc.openTransaction("Edit fillet")
+                        self.assertTrue(Gui.activeDocument().setEdit(fillet.Name))
+                        Gui.updateGui()
+                        settle()
+                        mode = window.findChild(QtWidgets.QComboBox, "filletType")
+                        self.assertEqual(
+                            [mode.itemText(i) for i in range(mode.count())], ["Uniform", "Various"]
+                        )
+                        radius = window.findChild(
+                            QtWidgets.QAbstractSpinBox, "defaultRadiusEditor"
+                        )
+                        radius.setProperty("rawValue", 1.1)
+                        Gui.updateGui()
+                        role = (
+                            QtWidgets.QDialogButtonBox.Ok
+                            if accept else QtWidgets.QDialogButtonBox.Cancel
+                        )
+                        tasks = window.findChild(QtWidgets.QStackedWidget, "Tasks")
+                        button = next(
+                            box.button(role)
+                            for box in tasks.findChildren(QtWidgets.QDialogButtonBox)
+                            if box.button(role) and box.button(role).isVisible()
+                        )
+                        button.click()
+                        Gui.updateGui()
+                        settle()
+                        self.assertFalse(
+                            Gui.activeDocument().getInEdit(), "OK" if accept else "Cancel"
+                        )
+                        self.assertAlmostEqual(fillet.Radius.Value, 1.1 if accept else 1.0)
+                        self.assertEqual(list(fillet.Base[1]), refs)
+                        self.assertTrue(fillet.UseAllEdges)
+                    self.Doc.save()
+                    self.Doc.restore()
+                    self.Doc.getObject("Fillet").touch()
+                    self.Doc.recompute()
+                    self.assertTrue(self.Doc.getObject("Fillet").isValid())
+                    self.assertAlmostEqual(self.Doc.getObject("Fillet").Radius.Value, 1.1)
+
     def tearDown(self):
+        if FreeCAD.GuiUp:
+            import FreeCADGui as Gui
+            if Gui.activeDocument() and Gui.activeDocument().getInEdit():
+                Gui.activeDocument().resetEdit()
         # closing doc
-        FreeCAD.closeDocument("PartDesignTestFillet")
+        FreeCAD.closeDocument(self.Doc.Name)
         # print ("omit closing document for debugging")

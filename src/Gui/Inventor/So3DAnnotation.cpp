@@ -74,6 +74,13 @@ bool SoDelayedAnnotationsElement::hasDelayedPaths(SoState* state)
     return !getElement(state)->paths.empty();
 }
 
+bool SoDelayedAnnotationsElement::hasPriorityPaths(SoState* state)
+{
+    return std::ranges::any_of(getElement(state)->paths, [](const auto& path) {
+        return path.priority != 0;
+    });
+}
+
 SoPathList SoDelayedAnnotationsElement::getDelayedPaths(SoState* state)
 {
     auto* elt = getElement(state);
@@ -108,17 +115,7 @@ void SoDelayedAnnotationsElement::processDelayedPathsWithPriority(SoState* state
         return;
     }
 
-    std::stable_sort(
-        elt->paths.begin(),
-        elt->paths.end(),
-        [](const PriorityPath& a, const PriorityPath& b) { return a.priority < b.priority; }
-    );
-
-    SoPathList sortedPaths;
-    for (const auto& priorityPath : elt->paths) {
-        sortedPaths.append(priorityPath.path);
-    }
-    elt->paths.clear();
+    SoPathList sortedPaths = getDelayedPaths(state);
 
     class ProcessingStateGuard
     {

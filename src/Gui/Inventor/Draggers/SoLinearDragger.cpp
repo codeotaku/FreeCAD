@@ -26,7 +26,6 @@
 
 #include <Inventor/SbRotation.h>
 #include <Inventor/nodes/SoBaseColor.h>
-#include <Inventor/nodes/SoPickStyle.h>
 #include <Inventor/nodes/SoSeparator.h>
 #include <Inventor/nodes/SoTransform.h>
 #include <Inventor/nodes/SoTranslation.h>
@@ -371,17 +370,12 @@ SoLinearDraggerContainer::SoLinearDraggerContainer()
 
     FC_ADD_CATALOG_ENTRY(draggerSwitch, SoToggleSwitch, geomSeparator);
     FC_ADD_CATALOG_ENTRY(transform, SoTransform, draggerSwitch);
-    FC_ADD_CATALOG_ENTRY(originLabelSwitch, SoToggleSwitch, draggerSwitch);
-    FC_ADD_CATALOG_ENTRY(originLabelPickStyle, SoPickStyle, originLabelSwitch);
-    FC_ADD_CATALOG_ENTRY(originLabel, SoFrameLabel, originLabelSwitch);
     FC_ADD_CATALOG_ENTRY(dragger, SoLinearDragger, draggerSwitch);
 
     SO_KIT_ADD_FIELD(rotation, (0, 0, 0, 0));
     SO_KIT_ADD_FIELD(color, (0, 0, 0));
     SO_KIT_ADD_FIELD(translation, (0, 0, 0));
     SO_KIT_ADD_FIELD(visible, (1));
-    SO_KIT_ADD_FIELD(originLabelText, (""));
-    SO_KIT_ADD_FIELD(originLabelVisible, (false));
 
     SO_KIT_INIT_INSTANCE();
 
@@ -389,21 +383,6 @@ SoLinearDraggerContainer::SoLinearDraggerContainer()
 
     auto sw = SO_GET_ANY_PART(this, "draggerSwitch", SoToggleSwitch);
     sw->on.connectFrom(&visible);
-
-    auto originLabelSwitch = SO_GET_ANY_PART(this, "originLabelSwitch", SoToggleSwitch);
-    originLabelSwitch->on.connectFrom(&originLabelVisible);
-
-    auto originLabelPickStyle = SO_GET_ANY_PART(this, "originLabelPickStyle", SoPickStyle);
-    originLabelPickStyle->style = SoPickStyle::UNPICKABLE;
-
-    auto originLabel = SO_GET_ANY_PART(this, "originLabel", SoFrameLabel);
-    originLabel->string.connectFrom(&originLabelText);
-    originLabel->textColor.setValue(1.0F, 1.0F, 1.0F);
-    originLabel->backgroundColor.setValue(0.15F, 0.15F, 0.15F);
-    originLabel->horAlignment = SoImage::CENTER;
-    originLabel->vertAlignment = SoImage::HALF;
-    originLabel->size = 16;
-    originLabel->border = true;
 
     getDragger()->color.connectFrom(&color);
 }

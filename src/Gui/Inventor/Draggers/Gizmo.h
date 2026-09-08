@@ -121,7 +121,6 @@ public:
     void setDragLength(double dragLength);
     void setGeometryScale(float scale) override;
     SoLinearDraggerContainer* getDraggerContainer();
-    void setOriginLabel(const std::string& text);
     void setActivationCallback(std::function<void()> callback);
     void setProperty(QuantitySpinBox* property);
     void setMultFactor(const double val);
@@ -261,6 +260,8 @@ public:
     void addGizmos(std::initializer_list<Gui::Gizmo*> gizmos);
     void addGizmos(const std::vector<Gui::Gizmo*>& gizmos);
     void replaceGizmos(const std::vector<Gui::Gizmo*>& gizmos);
+    // Opt in to rendering above other annotations; ordinary gizmos retain their default order.
+    void setOnTop(bool enabled);
     void attachViewer(Gui::View3DInventorViewer* viewer, Base::Placement& origin);
     void setUpAutoScale(SoCamera* cameraIn);
     void calculateScaleAndOrientation();

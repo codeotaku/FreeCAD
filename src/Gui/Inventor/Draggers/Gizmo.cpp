@@ -64,8 +64,6 @@ enum class DefaultDragBehavior
     Fine = 1,
 };
 
-constexpr int gizmoAnnotationPriority = std::numeric_limits<int>::max();
-
 Base::Reference<ParameterGrp> getGizmoParameterGroup()
 {
     static Base::Reference<ParameterGrp> hGrp = App::GetApplication().GetUserParameter().GetGroup(
@@ -267,13 +265,6 @@ SoLinearDraggerContainer* LinearGizmo::getDraggerContainer()
 {
     assert(draggerContainer && "Forgot to call GizmoContainer::initGizmos?");
     return draggerContainer;
-}
-
-void LinearGizmo::setOriginLabel(const std::string& text)
-{
-    assert(draggerContainer && "Forgot to call GizmoContainer::initGizmos?");
-    draggerContainer->originLabelText = text.c_str();
-    draggerContainer->originLabelVisible = !text.empty();
 }
 
 void LinearGizmo::setActivationCallback(std::function<void()> callback)
@@ -770,10 +761,6 @@ GizmoContainer::GizmoContainer()
 
     SO_KIT_ADD_FIELD(visible, (1));
 
-    auto annotation = SO_GET_ANY_PART(this, "annotation", So3DAnnotation);
-    annotation->priority = gizmoAnnotationPriority;
-    annotation->clearDepthBuffer = true;
-
     auto pickStyle = SO_GET_ANY_PART(this, "pickStyle", SoPickStyle);
     pickStyle->style = SoPickStyle::SHAPE_ON_TOP;
 
@@ -829,12 +816,7 @@ void GizmoContainer::uninitGizmos()
 
 void GizmoContainer::addGizmos(std::initializer_list<Gui::Gizmo*> gizmos)
 {
-    assert(this->gizmos.size() == 0 && "Already called GizmoContainer::addGizmos?");
-
-    for (auto gizmo : gizmos) {
-        addGizmo(gizmo);
-    }
-    initGizmos();
+    addGizmos(std::vector<Gui::Gizmo*>(gizmos));
 }
 
 void GizmoContainer::addGizmos(const std::vector<Gui::Gizmo*>& gizmos)
@@ -852,6 +834,13 @@ void GizmoContainer::replaceGizmos(const std::vector<Gui::Gizmo*>& gizmos)
     uninitGizmos();
     addGizmos(gizmos);
     calculateScaleAndOrientation();
+}
+
+void GizmoContainer::setOnTop(bool enabled)
+{
+    auto* annotation = SO_GET_ANY_PART(this, "annotation", So3DAnnotation);
+    annotation->priority = enabled ? std::numeric_limits<int>::max() : 0;
+    annotation->clearDepthBuffer = enabled;
 }
 
 void GizmoContainer::addGizmo(Gizmo* gizmo)
@@ -976,13 +965,7 @@ std::unique_ptr<GizmoContainer> GizmoContainer::create(
     ViewProviderDragger* vp
 )
 {
-    auto gizmoContainer = std::make_unique<GizmoContainer>();
-    gizmoContainer->addGizmos(gizmos);
-    gizmoContainer->viewProvider = vp;
-
-    vp->setGizmoContainer(gizmoContainer.get());
-
-    return gizmoContainer;
+    return create(std::vector<Gui::Gizmo*>(gizmos), vp);
 }
 
 std::unique_ptr<GizmoContainer> GizmoContainer::create(

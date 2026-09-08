@@ -581,7 +581,6 @@ App::DocumentObjectExecReturn* Fillet::execute()
 
     try {
         TopoShape shape(0);  //,getDocument()->getStringHasher());
-        std::vector<Part::FilletRadiusLaw> profiles;
 
         // Add signal handler for segfault protection
 #if defined(__GNUC__) && defined(FC_OS_LINUX)
@@ -589,7 +588,7 @@ App::DocumentObjectExecReturn* Fillet::execute()
 #endif
 
         if (variableRadius) {
-            shape.makeElementFillet(baseShape, edges, radiusLaws, nullptr, &profiles);
+            shape.makeElementFillet(baseShape, edges, radiusLaws);
         }
         else {
             shape.makeElementFillet(baseShape, edges, Radius.getValue(), Radius.getValue());
@@ -624,7 +623,6 @@ App::DocumentObjectExecReturn* Fillet::execute()
 
         shape = getSolid(shape);
         this->Shape.setValue(shape);
-        radiusProfiles = std::move(profiles);
         return App::DocumentObject::StdReturn;
     }
     catch (Base::Exception& e) {

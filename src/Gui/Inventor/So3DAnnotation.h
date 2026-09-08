@@ -71,6 +71,7 @@ public:
     static void addDelayedPath(SoState* state, SoPath* path, int priority = 0);
 
     static bool hasDelayedPaths(SoState* state);
+    static bool hasPriorityPaths(SoState* state);
 
     static SoPathList getDelayedPaths(SoState* state);
 

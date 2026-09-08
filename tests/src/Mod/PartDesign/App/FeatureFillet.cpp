@@ -10,7 +10,6 @@
 #include <BRepGProp.hxx>
 #include <GProp_GProps.hxx>
 #include <BRepFilletAPI_MakeFillet.hxx>
-#include <Law_Function.hxx>
 #include <TopExp_Explorer.hxx>
 #include <TopoDS.hxx>
 
@@ -53,7 +52,7 @@ protected:
     PartDesign::Fillet* fillet = nullptr;
 };
 
-TEST_F(FeatureFilletTest, OpenEdgeProfileInterpolationMatchesKernelLaw)
+TEST_F(FeatureFilletTest, VariableFilletMatchesDirectKernelBuild)
 {
     const TopoDS_Shape box = BRepPrimAPI_MakeBox(30, 20, 16).Shape();
     const TopoDS_Edge edge = TopoDS::Edge(TopExp_Explorer(box, TopAbs_EDGE).Current());
@@ -69,20 +68,12 @@ TEST_F(FeatureFilletTest, OpenEdgeProfileInterpolationMatchesKernelLaw)
         builder.Add(values, edge);
         builder.Build();
         ASSERT_TRUE(builder.IsDone());
-        const bool constant = builder.IsConstant(builder.Contour(edge), edge);
-        auto kernelLaw = constant ? Handle(Law_Function)()
-                                  : builder.GetLaw(builder.Contour(edge), edge);
-        const double length = builder.Length(builder.Contour(edge));
-        std::vector<Part::FilletRadiusLaw> profiles;
         Part::TopoShape result;
-        result.makeElementFillet(Part::TopoShape(box), {Part::TopoShape(edge)}, {points}, nullptr, &profiles);
-        ASSERT_EQ(profiles.size(), 1);
-        ASSERT_EQ(profiles.front().size(), 201);
-        for (const auto& sample : profiles.front()) {
-            const double expected = constant ? points.front().radius
-                                             : kernelLaw->Value(sample.position * length);
-            EXPECT_NEAR(sample.radius, expected, 1e-7);
-        }
+        result.makeElementFillet(Part::TopoShape(box), {Part::TopoShape(edge)}, {points});
+        GProp_GProps expected, actual;
+        BRepGProp::VolumeProperties(builder.Shape(), expected);
+        BRepGProp::VolumeProperties(result.getShape(), actual);
+        EXPECT_NEAR(actual.Mass(), expected.Mass(), 1e-7);
     }
 }
 

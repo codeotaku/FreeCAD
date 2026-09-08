@@ -101,7 +101,6 @@ private:
         std::string pointId;
         Gui::LinearGizmo* radius = nullptr;
         EdgePositionGizmo* position = nullptr;
-        Gui::QuantitySpinBox* positionEditor = nullptr;
         Gui::QuantitySpinBox* radiusEditor = nullptr;
     };
 
@@ -126,6 +125,8 @@ private:
     bool pointEditActive = false;
     void setupTaskPanel();
     void refreshReferences();
+    std::vector<std::pair<std::string, Part::TopoShape>> radiusEdges() const;
+    bool hasPositionExpression(const std::string& edge, const std::string& id) const;
     std::optional<Part::TopoShape> edgeShape(const std::string& name) const;
     void refreshPointTable();
     void changeRadiusLaw(int index);
@@ -136,10 +137,15 @@ private:
     QLabel* errorLabel = nullptr;
     void selectPoint(const std::string& id);
     void updatePointHighlight();
-    void editPoint(const std::string& id, double position, double radius, bool absolute);
+    void editPoint(
+        const std::string& edge,
+        const std::string& id,
+        double position,
+        double radius,
+        bool absolute
+    );
     void insertPoint(double position);
     void pointAction(const std::string& action);
-    std::vector<std::string> selectedPointIds() const;
     void beginPointEdit();
     void finishPointEdit();
     void updatePreview();
@@ -148,7 +154,6 @@ private:
     void clearGizmos();
     void rebuildAllGizmos();
     void rebuildGizmos();
-    void rebuildControlPointTable();
     void refreshEdgeTree();
     void refreshControlPointValuesFromModel();
     void activateEdge(const std::string& edgeName);

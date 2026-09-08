@@ -103,8 +103,6 @@ public:
         double value
     );
     void clearRadiusControlPoints(const std::string& edgeName);
-    // Transient display data from the last successful kernel build, not document properties.
-    const std::vector<Part::FilletRadiusLaw>& getRadiusProfiles() const { return radiusProfiles; }
 
     // Literal distances and proportions are different persistent design intents.
     bool isRadiusControlPointAbsolute(const std::string& edgeName, const std::string& id) const;
@@ -129,7 +127,6 @@ public:
     //@}
 
 protected:
-    std::vector<Part::FilletRadiusLaw> radiusProfiles;
     void Restore(Base::XMLReader& reader) override;
     void handleChangedPropertyType(
         Base::XMLReader& reader,
