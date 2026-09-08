@@ -30,7 +30,6 @@
 #include <unordered_map>
 #include <vector>
 #include <map>
-#include <QPointer>
 
 #include <Gui/Inventor/Draggers/Gizmo.h>
 
@@ -38,6 +37,9 @@
 #include "ViewProviderFillet.h"
 
 class Ui_TaskFilletParameters;
+class QComboBox;
+class QToolButton;
+class QLabel;
 
 namespace Gui
 {
@@ -49,7 +51,6 @@ namespace PartDesignGui
 {
 
 class EdgePositionGizmo;
-class FilletPointEditor;
 
 class TaskFilletParameters: public TaskDressUpParameters
 {
@@ -60,7 +61,7 @@ public:
     ~TaskFilletParameters() override;
 
     void apply() override;
-    bool commitPointInput();
+    Gui::TaskView::TaskBox* advancedBox = nullptr;
 
 private Q_SLOTS:
     void onStartRadiusChanged(double value);
@@ -106,6 +107,7 @@ private:
 
     std::unique_ptr<Ui_TaskFilletParameters> ui;
     std::unordered_map<std::string, EdgeRadii> edgeRadii;
+    bool geometryTreeDirty = true;
     double defaultRadius = 1.0;
 
     std::unique_ptr<Gui::GizmoContainer> gizmoContainer;
@@ -115,35 +117,29 @@ private:
     EdgePositionGizmo* endPointGizmo = nullptr;
     std::vector<ControlPointGizmoSet> controlPointGizmos;
     std::vector<Gui::QuantitySpinBox*> auxiliaryControlPointEditors;
-    std::vector<Gui::QuantitySpinBox*> controlPointPositionEditors;
-    std::vector<Gui::QuantitySpinBox*> controlPointLengthEditors;
-    std::vector<Gui::QuantitySpinBox*> controlPointRadiusEditors;
     fastsignals::scoped_connection filletChangedConnection;
     bool addingControlPoint = false;
     bool controlPointRefreshQueued = false;
     bool controlPointValueRefreshRequested = false;
     bool controlPointGeometryRefreshRequested = false;
-    FilletPointEditor* pointEditor = nullptr;
-    QPointer<FilletPointEditor> inlineEditor;
     std::string activePoint = "start";
-    bool refreshingEditor = false;
-    struct EditState
-    {
-        std::map<std::string, std::string> laws, ids, values;
-        std::shared_ptr<App::Property> expressions;
-    };
-    std::vector<EditState> editUndo, editRedo;
-    std::optional<EditState> pendingEdit;
-    void setupPointEditor();
-    void refreshPointEditor();
-    void updateInlinePlacement();
+    bool pointEditActive = false;
+    void setupTaskPanel();
+    void refreshReferences();
+    std::optional<Part::TopoShape> edgeShape(const std::string& name) const;
+    void refreshPointTable();
+    void changeRadiusLaw(int index);
+    bool currentLawIsVariable() const;
+    QComboBox* radiusLaw = nullptr;
+    QComboBox* positionUnits = nullptr;
+    QToolButton* removePointButton = nullptr;
+    QLabel* errorLabel = nullptr;
     void selectPoint(const std::string& id);
+    void updatePointHighlight();
     void editPoint(const std::string& id, double position, double radius, bool absolute);
     void insertPoint(double position);
     void pointAction(const std::string& action);
     std::vector<std::string> selectedPointIds() const;
-    EditState captureEdit() const;
-    void restoreEdit(const EditState& state);
     void beginPointEdit();
     void finishPointEdit();
     void updatePreview();

@@ -54,9 +54,17 @@ public:
     App::PropertyEnumeration RadiusMode;
     App::PropertyQuantityConstraint Radius;
     App::PropertyMap VariableRadiusData;
+    App::PropertyMap RadiusLawModes;
+    bool isVariableRadiusLaw(const std::string& edgeName) const;
     App::PropertyMap VariableRadiusControlPointIds;
     App::PropertyMap VariableRadiusControlPointValues;
     App::PropertyBool UseAllEdges;
+
+    // Expand face selections once for both the task panel and the variable-radius builder.
+    // Explicit edge references take precedence; shared face boundaries are deduplicated.
+    std::vector<std::pair<std::string, Part::TopoShape>> getRadiusEdges(
+        Part::TopoShape shape = {}
+    ) const;
 
     /** Persist a variable-radius law for a Base edge reference.
      *

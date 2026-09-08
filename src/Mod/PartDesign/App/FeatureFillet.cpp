@@ -152,6 +152,13 @@ Fillet::Fillet()
     Radius.setUnit(Base::Unit::Length);
     Radius.setConstraints(&floatRadius);
     ADD_PROPERTY_TYPE(
+        RadiusLawModes,
+        (std::map<std::string, std::string>()),
+        "Fillet",
+        App::Prop_Hidden,
+        "Per-edge radius law editor: Constant or Variable."
+    );
+    ADD_PROPERTY_TYPE(
         VariableRadiusData,
         (std::map<std::string, std::string>()),
         "Fillet",
@@ -306,7 +313,24 @@ Part::FilletRadiusLaw Fillet::getRadiusLaw(
             }
         }
     }
+    if (law.size() >= 2 && RadiusLawModes.getValue(edgeName) == "Constant") {
+        return {{0, law.front().radius}, {1, law.front().radius}};
+    }
     return law;
+}
+
+bool Fillet::isVariableRadiusLaw(const std::string& edgeName) const
+{
+    const auto mode = RadiusLawModes.getValue(edgeName);
+    if (!mode.empty()) {
+        return mode == "Variable";
+    }
+    // Documents created before the task-panel law selector have no editor-mode metadata.
+    if (!getRadiusControlPointIds(edgeName).empty()) {
+        return true;
+    }
+    const auto law = getRadiusLaw(edgeName);
+    return law.size() > 2 || (law.size() == 2 && law.front().radius != law.back().radius);
 }
 
 std::vector<std::string> Fillet::getRadiusControlPointIds(const std::string& edgeName) const
@@ -434,11 +458,50 @@ void Fillet::clearRadiusControlPoints(const std::string& edgeName)
 short Fillet::mustExecute() const
 {
     if (Placement.isTouched() || RadiusMode.isTouched() || Radius.isTouched()
-        || VariableRadiusData.isTouched() || VariableRadiusControlPointIds.isTouched()
-        || VariableRadiusControlPointValues.isTouched()) {
+        || VariableRadiusData.isTouched() || RadiusLawModes.isTouched()
+        || VariableRadiusControlPointIds.isTouched() || VariableRadiusControlPointValues.isTouched()) {
         return 1;
     }
     return DressUp::mustExecute();
+}
+
+std::vector<std::pair<std::string, Part::TopoShape>> Fillet::getRadiusEdges(Part::TopoShape shape) const
+{
+    if (shape.isNull()) {
+        shape = getBaseTopoShape(true);
+    }
+    const auto& stored = Base.getSubValues();
+    const auto resolved = Base.getSubValues(true);
+    std::vector<std::pair<std::string, Part::TopoShape>> result;
+    if (stored.size() != resolved.size()) {
+        throw Base::ValueError("Invalid fillet references");
+    }
+    const auto append = [&](const std::string& name, const Part::TopoShape& edge) {
+        if (std::ranges::none_of(result, [&](const auto& existing) {
+                return existing.second.getShape().IsSame(edge.getShape());
+            })) {
+            result.emplace_back(name, edge);
+        }
+    };
+    // Explicit edges retain their stored (topologically mapped) law keys.
+    for (size_t i = 0; i < stored.size(); ++i) {
+        auto selected = shape.getSubTopoShape(resolved[i].c_str());
+        if (selected.shapeType() == TopAbs_EDGE) {
+            append(stored[i], selected);
+        }
+        else if (selected.shapeType() != TopAbs_FACE) {
+            throw Base::ValueError("Fillets require edges or faces");
+        }
+    }
+    for (size_t i = 0; i < stored.size(); ++i) {
+        auto selected = shape.getSubTopoShape(resolved[i].c_str());
+        if (selected.shapeType() == TopAbs_FACE) {
+            for (const auto& edge : selected.getSubTopoShapes(TopAbs_EDGE)) {
+                append("Edge" + std::to_string(shape.findShape(edge.getShape())), edge);
+            }
+        }
+    }
+    return result;
 }
 
 App::DocumentObjectExecReturn* Fillet::execute()
@@ -468,29 +531,23 @@ App::DocumentObjectExecReturn* Fillet::execute()
             );
         }
 
-        const auto& storedRefs = Base.getSubValues();
-        const auto resolvedRefs = Base.getSubValues(true);
-        if (storedRefs.size() != resolvedRefs.size()) {
-            return new App::DocumentObjectExecReturn(
-                QT_TRANSLATE_NOOP("Exception", "Invalid variable-radius edge references")
-            );
-        }
-
         const auto& storedLaws = VariableRadiusData.getValues();
-        for (std::size_t i = 0; i < storedRefs.size(); ++i) {
-            auto edge = baseShape.getSubTopoShape(resolvedRefs[i].c_str(), true);
-            if (edge.isNull() || edge.shapeType() != TopAbs_EDGE) {
-                return new App::DocumentObjectExecReturn(QT_TRANSLATE_NOOP(
-                    "Exception",
-                    "Variable-radius fillets require explicit edge selections"
-                ));
-            }
-
+        std::vector<std::pair<std::string, Part::TopoShape>> selectedEdges;
+        try {
+            selectedEdges = getRadiusEdges(baseShape);
+        }
+        catch (const Base::Exception& error) {
+            return new App::DocumentObjectExecReturn(error.what());
+        }
+        catch (const Standard_Failure& error) {
+            return new App::DocumentObjectExecReturn(error.GetMessageString());
+        }
+        for (const auto& [name, edge] : selectedEdges) {
             Part::FilletRadiusLaw law;
-            if (storedLaws.contains(storedRefs[i])) {
+            if (storedLaws.contains(name)) {
                 GProp_GProps edgeProperties;
                 BRepGProp::LinearProperties(edge.getShape(), edgeProperties);
-                law = getRadiusLaw(storedRefs[i], edgeProperties.Mass());
+                law = getRadiusLaw(name, edgeProperties.Mass());
                 if (law.empty()) {
                     return new App::DocumentObjectExecReturn(
                         QT_TRANSLATE_NOOP("Exception", "Invalid stored variable-radius law")

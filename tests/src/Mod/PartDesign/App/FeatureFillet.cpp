@@ -359,6 +359,58 @@ TEST_F(FeatureFilletTest, InvalidStoredRadiusLawReturnsEmptyLaw)
     EXPECT_TRUE(fillet->getRadiusLaw("Edge1").empty());
 }
 
+TEST_F(FeatureFilletTest, EqualEndpointVariableLawModeSurvivesSaveRestore)
+{
+    fillet->setRadiusLaw("Edge2", {{0, 2}, {1, 2}});
+    EXPECT_FALSE(fillet->isVariableRadiusLaw("Edge2"));
+    fillet->RadiusLawModes.setValue("Edge2", "Variable");
+    EXPECT_TRUE(fillet->isVariableRadiusLaw("Edge2"));
+    savedPath = std::filesystem::temp_directory_path() / (documentName + ".FCStd");
+    document->saveAs(savedPath.string().c_str());
+    document->restore();
+    auto* restored = dynamic_cast<PartDesign::Fillet*>(document->getObject("Fillet"));
+    ASSERT_NE(restored, nullptr);
+    EXPECT_TRUE(restored->isVariableRadiusLaw("Edge2"));
+}
+
+TEST_F(FeatureFilletTest, PerEdgeConstantLawUsesSingleExpression)
+{
+    fillet->setRadiusLaw("Edge2", {{0, 2}, {1, 2}});
+    fillet->RadiusLawModes.setValue("Edge2", "Constant");
+    const auto path = fillet->ensureRadiusControlPointValue(
+        "Edge2",
+        "start",
+        PartDesign::Fillet::ControlPointComponent::Radius,
+        2
+    );
+    fillet->setExpression(path, App::ExpressionParser::parse(fillet, "3 mm"));
+    const auto law = fillet->getRadiusLaw("Edge2");
+    ASSERT_EQ(law.size(), 2);
+    EXPECT_DOUBLE_EQ(law.front().radius, 3);
+    EXPECT_DOUBLE_EQ(law.back().radius, 3);
+}
+
+TEST_F(FeatureFilletTest, FaceGroupsDeduplicateAndAllowIndependentBoundaryLaws)
+{
+    auto* body = document->addObject<PartDesign::Body>("Body");
+    auto* base = document->addObject<PartDesign::Feature>("BaseFeature");
+    body->addObject(base);
+    body->addObject(fillet);
+    base->Shape.setValue(BRepPrimAPI_MakeBox(30, 20, 16).Shape());
+    fillet->Base.setValue(base, {"Face1"});
+    auto edges = fillet->getRadiusEdges();
+    ASSERT_EQ(edges.size(), 4);
+    const auto first = edges.front().first;
+    fillet->Base.setValue(base, {"Face1", first});
+    EXPECT_EQ(fillet->getRadiusEdges().size(), 4);
+    fillet->RadiusMode.setValue(1L);
+    fillet->setRadiusLaw(first, {{0, .5}, {.5, .7}, {1, .5}});
+    fillet->setRadiusControlPointIds(first, {"cp1"});
+    document->recompute();
+    EXPECT_FALSE(fillet->isError());
+    EXPECT_TRUE(fillet->Shape.getShape().hasSubShape(TopAbs_SOLID));
+}
+
 TEST_F(FeatureFilletTest, ExecutesVariableRadiusFillet)
 {
     auto* body = document->addObject<PartDesign::Body>("Body");

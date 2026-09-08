@@ -13,7 +13,6 @@
   <property name="windowTitle">
    <string notr="true">Form</string>
   </property>
-
   <layout class="QVBoxLayout" name="verticalLayout">
    <item>
     <widget class="QToolButton" name="buttonRefSel">
@@ -21,7 +20,7 @@
       <string>Toggles between selection and preview mode</string>
      </property>
      <property name="text">
-      <string>Select</string>
+      <string>+ Add geometry</string>
      </property>
      <property name="checkable">
       <bool>true</bool>
@@ -80,22 +79,12 @@
         </attribute>
         <column>
          <property name="text">
-          <string>Element</string>
+          <string>Edges/Faces</string>
          </property>
         </column>
         <column>
          <property name="text">
           <string>Radius</string>
-         </property>
-        </column>
-        <column>
-         <property name="text">
-          <string>Parameter</string>
-         </property>
-        </column>
-        <column>
-         <property name="text">
-          <string>Length</string>
          </property>
         </column>
        </widget>
@@ -118,7 +107,7 @@
      <item>
       <widget class="QLabel" name="filletTypeLabel">
        <property name="text">
-        <string>Fillet type</string>
+        <string>Mode</string>
        </property>
       </widget>
      </item>
@@ -126,12 +115,12 @@
       <widget class="QComboBox" name="filletType">
        <item>
         <property name="text">
-         <string>Constant Radius</string>
+         <string>Uniform</string>
         </property>
        </item>
        <item>
         <property name="text">
-         <string>Variable Radius</string>
+         <string>Various</string>
         </property>
        </item>
       </widget>
@@ -170,37 +159,10 @@
        </property>
       </widget>
      </item>
-     <item row="1" column="1">
-      <widget class="QLabel" name="positionHeaderLabel">
-       <property name="text">
-        <string>Position</string>
-       </property>
-      </widget>
-     </item>
-     <item row="1" column="2">
-      <widget class="QLabel" name="radiusHeaderLabel">
-       <property name="text">
-        <string>Radius</string>
-       </property>
-      </widget>
-     </item>
      <item row="2" column="0">
       <widget class="QLabel" name="startRadiusLabel">
        <property name="text">
         <string>Start radius</string>
-       </property>
-      </widget>
-     </item>
-     <item row="2" column="1">
-      <widget class="QDoubleSpinBox" name="filletStartPosition">
-       <property name="enabled">
-        <bool>false</bool>
-       </property>
-       <property name="decimals">
-        <number>3</number>
-       </property>
-       <property name="maximum">
-        <double>1.000000000000000</double>
        </property>
       </widget>
      </item>
@@ -211,29 +173,6 @@
        </property>
        <property name="keyboardTracking">
         <bool>false</bool>
-       </property>
-      </widget>
-     </item>
-     <item row="3" column="0">
-      <widget class="QLabel" name="endRadiusLabel">
-       <property name="text">
-        <string>End radius</string>
-       </property>
-      </widget>
-     </item>
-     <item row="3" column="1">
-      <widget class="QDoubleSpinBox" name="filletEndPosition">
-       <property name="enabled">
-        <bool>false</bool>
-       </property>
-       <property name="decimals">
-        <number>3</number>
-       </property>
-       <property name="maximum">
-        <double>1.000000000000000</double>
-       </property>
-       <property name="value">
-        <double>1.000000000000000</double>
        </property>
       </widget>
      </item>
@@ -270,11 +209,11 @@
       <enum>QFrame::Sunken</enum>
      </property>
      <property name="columnCount">
-      <number>5</number>
+      <number>3</number>
      </property>
      <column>
       <property name="text">
-       <string>Point</string>
+       <string />
       </property>
      </column>
      <column>
@@ -284,17 +223,7 @@
      </column>
      <column>
       <property name="text">
-       <string>Length</string>
-      </property>
-     </column>
-     <column>
-      <property name="text">
        <string>Radius</string>
-      </property>
-     </column>
-     <column>
-      <property name="text">
-       <string notr="true"/>
       </property>
      </column>
     </widget>
@@ -320,7 +249,7 @@
         <string>Add a control point by clicking any selected edge</string>
        </property>
        <property name="text">
-        <string>Add control point</string>
+        <string>+ Add control point</string>
        </property>
        <property name="checkable">
         <bool>true</bool>
@@ -356,6 +285,6 @@
   <tabstop>addControlPointButton</tabstop>
   <tabstop>checkBoxUseAllEdges</tabstop>
  </tabstops>
- <resources/>
- <connections/>
+ <resources />
+ <connections />
 </ui>
