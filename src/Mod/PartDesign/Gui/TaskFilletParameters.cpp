@@ -35,17 +35,10 @@
 #include <QTreeWidget>
 #include <QKeyEvent>
 #include <Inventor/nodes/SoSphere.h>
-#include <Inventor/nodes/SoLightModel.h>
-#include <Inventor/nodes/SoMaterial.h>
-#include <Inventor/nodes/SoSeparator.h>
-#include <Inventor/nodes/SoCoordinate3.h>
-#include <Inventor/nodes/SoLineSet.h>
-#include <Inventor/nodes/SoDrawStyle.h>
 
 #include <algorithm>
 #include <cmath>
 #include <functional>
-#include <numbers>
 #include <set>
 
 #include <BRepAdaptor_Curve.hxx>
@@ -57,13 +50,16 @@
 
 #include <Base/Interpreter.h>
 #include <Base/Converter.h>
+#include <Base/ServiceProvider.h>
 #include <Base/Quantity.h>
 #include <App/Document.h>
 #include <App/DocumentObject.h>
 #include <Gui/Inventor/Draggers/SoLinearDragger.h>
+#include <Gui/Inventor/Draggers/GizmoStyleParameters.h>
 #include <Gui/Inventor/Draggers/SoLinearDraggerGeometry.h>
 #include <Gui/Selection/Selection.h>
 #include <Gui/BitmapFactory.h>
+#include <Gui/Utilities.h>
 #include <Gui/ViewProvider.h>
 #include <Gui/Document.h>
 #include <Gui/View3DInventor.h>
@@ -115,78 +111,20 @@ public:
     }
 };
 
-SoMaterial* filletHandle(Gui::SoLinearDragger* dragger, bool ball, float scale = 1.F)
-{
-    auto* arrow = SO_GET_PART(dragger, "arrow", Gui::SoArrowGeometry);
-    arrow->cylinderHeight = 0;
-    arrow->coneHeight = 0;
-    arrow->cylinderRadius = 0;
-    arrow->coneBottomRadius = 0;
-    // The dragger uses this vector to orient the handle, independently of its mesh.
-    arrow->tipPosition = SbVec3f(0, 1, 0);
-    dragger->baseGeomVisible = false;
-    SoSeparator* separator = nullptr;
-    for (int i = 0; i < arrow->getChildren()->getLength(); ++i) {
-        auto* child = (*arrow->getChildren())[i];
-        if (child->isOfType(SoSeparator::getClassTypeId())) {
-            separator = static_cast<SoSeparator*>(child);
-            break;
-        }
-    }
-    if (!separator) {
-        return nullptr;
-    }
-    if (ball) {
-        // SoArrowGeometry normally uses BASE_COLOR, which flattens spheres into discs.
-        auto* lighting = new SoLightModel;
-        lighting->model = SoLightModel::PHONG;
-        separator->addChild(lighting);
-        auto* gold = new SoMaterial;
-        gold->setName("filletPointMaterial");
-        gold->diffuseColor = SbColor(.9F, .62F, .16F);
-        gold->ambientColor = SbColor(.3F, .19F, .04F);
-        gold->specularColor = SbColor(1.F, .91F, .62F);
-        gold->shininess = .65F;
-        separator->addChild(gold);
-        auto* sphere = new SoSphere;
-        sphere->setName(scale == 1.F ? "filletEndpointBall" : "filletControlPointBall");
-        sphere->radius = .6F * scale;
-        separator->addChild(sphere);
-        dragger->baseGeomVisible = false;
-        return gold;
-    }
-    else {
-        auto* style = new SoDrawStyle;
-        style->lineWidth = 1.5F;
-        separator->addChild(style);
-        auto* coords = new SoCoordinate3;
-        for (int i = 0; i <= 32; ++i) {
-            const double angle = 2.0 * std::numbers::pi * i / 32;
-            coords->point.set1Value(i, scale * .65F * std::cos(angle), scale * .65F * std::sin(angle), 0);
-        }
-        separator->addChild(coords);
-        auto* line = new SoLineSet;
-        line->numVertices = 33;
-        separator->addChild(line);
-    }
-    return nullptr;
-}
-
 class FilletRadiusGizmo: public Gui::LinearGizmo
 {
 public:
-    FilletRadiusGizmo(Gui::QuantitySpinBox* editor, std::function<void(bool)> gesture, float scale = 1.F)
+    FilletRadiusGizmo(Gui::QuantitySpinBox* editor, std::function<void(bool)> gesture)
         : LinearGizmo(editor)
         , gesture(std::move(gesture))
-        , scale(scale)
     {}
     SoInteractionKit* initDragger() override
     {
         auto* result = LinearGizmo::initDragger();
         auto* dragger = getDraggerContainer()->getDragger();
         dragger->setName("filletRadiusHandle");
-        getDraggerContainer()->color = SbColor(.9F, .68F, .23F);
-        filletHandle(dragger, false, scale);
+        auto* arrow = SO_GET_PART(dragger, "arrow", Gui::SoArrowGeometry);
+        arrow->setName("filletNativeRadiusArrow");
         dragger->addStartCallback(start, this);
         dragger->addFinishCallback(finish, this);
         return result;
@@ -213,7 +151,6 @@ private:
         static_cast<FilletRadiusGizmo*>(data)->gesture(false);
     }
     std::function<void(bool)> gesture;
-    float scale;
 };
 
 struct EdgePointFrame
@@ -312,12 +249,15 @@ public:
     SoInteractionKit* initDragger() override
     {
         container = new Gui::SoLinearDraggerContainer;
-        container->color.setValue(0.95F, 0.75F, 0.15F);
         dragger = container->getDragger();
+        setSelected(false);
         dragger->setName("filletPositionHandle");
         dragger->labelVisible = false;
-        dragger->instantiateBaseGeometry();
-        material = filletHandle(dragger, true, fixed ? 1.F : .8F);
+        auto* geometry = new Gui::SoSphereGeometry;
+        geometry->radius = .7F * (fixed ? 1.F : .8F);
+        auto* sphere = SO_GET_PART(geometry, "sphere", SoSphere);
+        sphere->setName(fixed ? "filletEndpointBall" : "filletControlPointBall");
+        dragger->setPart("arrow", geometry);
         dragger->addStartCallback(&EdgePositionGizmo::startCallback, this);
         dragger->addMotionCallback(&EdgePositionGizmo::motionCallback, this);
         dragger->addFinishCallback(&EdgePositionGizmo::finishCallback, this);
@@ -333,7 +273,6 @@ public:
         }
         dragger = nullptr;
         container = nullptr;
-        material = nullptr;
     }
 
     Gui::GizmoPlacement getDraggerPlacement() override
@@ -368,9 +307,14 @@ public:
 
     void setSelected(bool selected)
     {
-        if (material) {
-            material->diffuseColor = selected ? SbColor(.2F, .7F, 1.F) : SbColor(.9F, .62F, .16F);
-            material->emissiveColor = selected ? SbColor(.04F, .14F, .2F) : SbColor(0, 0, 0);
+        if (dragger) {
+            auto* styles = Base::provideService<Gui::StyleParameters::ParameterManager>();
+            dragger->activeColor = styles->resolve(
+                Gui::StyleParameters::LinearGizmoActiveColor
+            ).asValue<SbColor>();
+            dragger->color = selected ? dragger->activeColor.getValue()
+                                     : styles->resolve(Gui::StyleParameters::LinearGizmoBaseColor)
+                                           .asValue<SbColor>();
         }
     }
 
@@ -385,7 +329,6 @@ public:
     }
 
 private:
-    SoMaterial* material = nullptr;  // Owned by the dragger's scene graph.
     static void startCallback(void* data, SoDragger*)
     {
         auto* self = static_cast<EdgePositionGizmo*>(data);
@@ -1335,7 +1278,7 @@ void TaskFilletParameters::rebuildGizmos()
                 continue;
             }
 
-            auto* radius = new FilletRadiusGizmo(radiusEditor, gesture, .8F);
+            auto* radius = new FilletRadiusGizmo(radiusEditor, gesture);
             radius->setActivationCallback([this, edgeName, id = points[pointIndex].id]() {
                 beginPointEdit();
                 activateEdge(edgeName);
