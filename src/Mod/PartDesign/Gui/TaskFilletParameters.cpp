@@ -465,10 +465,6 @@ TaskFilletParameters::TaskFilletParameters(ViewProviderDressUp* DressUpView, QWi
             if (!valuesChanged && !radiusChanged && !expressionsChanged && !shapeChanged) {
                 return;
             }
-            controlPointValueRefreshRequested = controlPointValueRefreshRequested || valuesChanged
-                || radiusChanged || expressionsChanged;
-            controlPointGeometryRefreshRequested = controlPointGeometryRefreshRequested
-                || shapeChanged;
             if (controlPointRefreshQueued) {
                 return;
             }
@@ -477,16 +473,7 @@ TaskFilletParameters::TaskFilletParameters(ViewProviderDressUp* DressUpView, QWi
                 this,
                 [this]() {
                     controlPointRefreshQueued = false;
-                    const bool refreshValues = controlPointValueRefreshRequested;
-                    const bool refreshGeometry = controlPointGeometryRefreshRequested;
-                    controlPointValueRefreshRequested = false;
-                    controlPointGeometryRefreshRequested = false;
-                    if (refreshValues) {
-                        refreshControlPointValuesFromModel();
-                    }
-                    else if (refreshGeometry) {
-                        refreshEdgeTree();
-                    }
+                    refreshControlPointValuesFromModel();
                     updateFilletTypeUi();
                 },
                 Qt::QueuedConnection
@@ -510,18 +497,11 @@ TaskFilletParameters::TaskFilletParameters(ViewProviderDressUp* DressUpView, QWi
     ui->filletType->setCurrentIndex(pcFillet->RadiusMode.getValue());
     allowFaces = true;
 
-    ui->filletRadius->setUnit(Base::Unit::Length);
-    ui->filletRadius->setValue(r);
-    ui->filletRadius->setMinimum(0);
-    ui->filletRadius->selectNumber();
-
-    ui->filletEndRadius->setUnit(Base::Unit::Length);
-    ui->filletEndRadius->setValue(r);
-    ui->filletEndRadius->setMinimum(0);
-
-    ui->defaultRadiusEditor->setUnit(Base::Unit::Length);
-    ui->defaultRadiusEditor->setValue(r);
-    ui->defaultRadiusEditor->setMinimum(0);
+    for (auto* editor : {ui->filletRadius, ui->filletEndRadius, ui->defaultRadiusEditor}) {
+        editor->setUnit(Base::Unit::Length);
+        editor->setValue(r);
+        editor->setMinimum(0);
+    }
     ui->defaultRadiusEditor->bind(pcFillet->Radius);
     ui->defaultRadiusEditor->setAutoApply(true);
 
@@ -581,26 +561,18 @@ TaskFilletParameters::TaskFilletParameters(ViewProviderDressUp* DressUpView, QWi
         this, &TaskFilletParameters::onStartRadiusChanged);
     connect(ui->filletEndRadius, qOverload<double>(&Gui::QuantitySpinBox::valueChanged),
         this, &TaskFilletParameters::onEndRadiusChanged);
-    connect(ui->filletRadius, &Gui::QuantitySpinBox::showFormulaDialog,
-        this, [this](bool shown) {
+    for (auto* editor : {ui->filletRadius, ui->filletEndRadius}) {
+        connect(editor, &Gui::QuantitySpinBox::showFormulaDialog, this, [this](bool shown) {
             if (!shown) {
                 updatePreview();
                 refreshControlPointValuesFromModel();
-                setGizmoPositions();
             }
         });
-    connect(ui->filletEndRadius, &Gui::QuantitySpinBox::showFormulaDialog,
-        this, [this](bool shown) {
-            if (!shown) {
-                updatePreview();
-                refreshControlPointValuesFromModel();
-                setGizmoPositions();
-            }
-        });
+    }
     connect(ui->filletType, qOverload<int>(&QComboBox::currentIndexChanged),
         this, &TaskFilletParameters::onFilletTypeChanged);
     connect(ui->addControlPointButton, &QToolButton::toggled,
-        this, &TaskFilletParameters::onAddControlPointToggled);
+        this, &TaskFilletParameters::setAddControlPointMode);
 
     connect(ui->defaultRadiusEditor, qOverload<double>(&Gui::QuantitySpinBox::valueChanged),
         this, &TaskFilletParameters::onDefaultRadiusChanged);
@@ -648,7 +620,10 @@ TaskFilletParameters::TaskFilletParameters(ViewProviderDressUp* DressUpView, QWi
 
     refreshReferences();
     refreshEdgeTree();
-    setupGizmos(DressUpView);
+    rebuildGizmos();
+    if (GizmoContainer::isEnabled()) {
+        showDraggerHints();
+    }
     updateFilletTypeUi();
     ensureCurrentEdge();
 }
@@ -754,8 +729,10 @@ void TaskFilletParameters::setButtons(const selectionModes mode)
 void TaskFilletParameters::onRefDeleted()
 {
     auto* fillet = getObject<PartDesign::Fillet>();
+    std::set<std::string> selected;
     std::set<std::string> removed;
     for (auto* item : ui->treeWidgetReferences->selectedItems()) {
+        selected.insert(item->text(0).toStdString());
         removed.insert(item->text(0).toStdString());
         for (int i = 0; i < item->childCount(); ++i) {
             removed.insert(item->child(i)->text(0).toStdString());
@@ -763,6 +740,20 @@ void TaskFilletParameters::onRefDeleted()
     }
     if (removed.empty()) {
         return;
+    }
+    // A deleted face does not own boundaries shared with a retained face.
+    // Explicitly selected edges, however, must be removed from every group.
+    for (int row = 0; row < ui->treeWidgetReferences->topLevelItemCount(); ++row) {
+        auto* group = ui->treeWidgetReferences->topLevelItem(row);
+        if (selected.contains(group->text(0).toStdString())) {
+            continue;
+        }
+        for (int i = 0; i < group->childCount(); ++i) {
+            const auto child = group->child(i)->text(0).toStdString();
+            if (!selected.contains(child)) {
+                removed.erase(child);
+            }
+        }
     }
     // Removing part of a face selection makes the remaining boundaries explicit.
     // Otherwise the face would silently re-add the removed edge on recompute.
@@ -812,29 +803,8 @@ void TaskFilletParameters::onRefDeleted()
 void TaskFilletParameters::onAddAllEdges()
 {
     TaskDressUpParameters::addAllEdges(ui->listWidgetReferences);
-
-    auto fillet = getObject<PartDesign::Fillet>();
-    if (!fillet) {
-        return;
-    }
-
-    std::vector<std::string> newEdges;
-    for (const auto& ref : fillet->Base.getSubValues()) {
-        const QString text = QString::fromStdString(ref);
-        if (ui->listWidgetReferences->findItems(text, Qt::MatchExactly).empty()) {
-            ui->listWidgetReferences->addItem(text);
-        }
-        if (edgeRadii.try_emplace(ref, EdgeRadii {defaultRadius, defaultRadius, {}}).second) {
-            newEdges.push_back(ref);
-        }
-    }
-    ensureCurrentEdge();
-    if (isVariableRadius()) {
-        for (const auto& edgeName : newEdges) {
-            syncRadiusLaw(edgeName);
-        }
-    }
     refreshReferences();
+    updatePreview();
     refreshEdgeTree();
     rebuildAllGizmos();
 }
@@ -842,24 +812,7 @@ void TaskFilletParameters::onAddAllEdges()
 void TaskFilletParameters::onStartRadiusChanged(double value)
 {
     if (!isVariableRadius()) {
-        defaultRadius = value;
-        {
-            QSignalBlocker blocker(ui->defaultRadiusEditor);
-            ui->defaultRadiusEditor->setValue(value);
-        }
-        if (auto* fillet = getObject<PartDesign::Fillet>()) {
-            fillet->Radius.setValue(value);
-            fillet->recomputeFeature();
-            hideOnError();
-            for (int row = 0; row < ui->listWidgetReferences->count(); ++row) {
-                auto* item = ui->listWidgetReferences->item(row);
-                const auto found = edgeRadii.find(item->text().toStdString());
-                if (found != edgeRadii.end()) {
-                    updateRadiusTooltip(item, found->second);
-                }
-            }
-            refreshEdgeTree();
-        }
+        onDefaultRadiusChanged(value);
         return;
     }
 
@@ -916,7 +869,7 @@ void TaskFilletParameters::onFilletTypeChanged(int index)
             refreshReferences();
         }
         if (variable && currentEdgeShape()) {
-            syncCurrentRadiusLaw();
+            syncRadiusLaw(ui->listWidgetReferences->currentItem()->text().toStdString());
         }
         else {
             fillet->recomputeFeature();
@@ -930,11 +883,6 @@ void TaskFilletParameters::onFilletTypeChanged(int index)
     ensureCurrentEdge();
     refreshEdgeTree();
     rebuildAllGizmos();
-}
-
-void TaskFilletParameters::onAddControlPointToggled(bool checked)
-{
-    setAddControlPointMode(checked);
 }
 
 void TaskFilletParameters::onCurrentEdgeChanged(
@@ -1014,7 +962,6 @@ void TaskFilletParameters::onCurrentEdgeChanged(
     ui->filletEndRadius->setValue(radii.end);
 
     setRadiusControlsEnabled(true);
-    updateRadiusTooltip(current, radii);
     refreshPointTable();
     updateFilletTypeUi();
     setGizmoPositions();
@@ -1057,28 +1004,19 @@ void TaskFilletParameters::apply()
     }
 }
 
-void TaskFilletParameters::setupGizmos([[maybe_unused]] ViewProviderDressUp* vp)
-{
-    if (GizmoContainer::isEnabled()) {
-        rebuildGizmos();
-        showDraggerHints();
-    }
-}
-
 void TaskFilletParameters::clearGizmos()
 {
     radiusGizmo = nullptr;
     radiusGizmo2 = nullptr;
     startPointGizmo = nullptr;
     endPointGizmo = nullptr;
-    controlPointGizmos.clear();
     if (gizmoContainer) {
         gizmoContainer->replaceGizmos({});
     }
-    for (auto* editor : auxiliaryControlPointEditors) {
-        delete editor;
+    for (const auto& gizmo : controlPointGizmos) {
+        delete gizmo.radiusEditor;
     }
-    auxiliaryControlPointEditors.clear();
+    controlPointGizmos.clear();
 }
 
 void TaskFilletParameters::rebuildAllGizmos()
@@ -1199,15 +1137,8 @@ void TaskFilletParameters::refreshControlPointValuesFromModel()
         if (law.size() < 2 || ids.size() + 2 != law.size()) {
             continue;
         }
-        bool edgeStructureChanged = radii.controlPoints.size() != ids.size();
-        if (!edgeStructureChanged) {
-            for (std::size_t i = 0; i < ids.size(); ++i) {
-                if (radii.controlPoints[i].id != ids[i]) {
-                    edgeStructureChanged = true;
-                    break;
-                }
-            }
-        }
+        const bool edgeStructureChanged
+            = !std::ranges::equal(radii.controlPoints, ids, {}, &ControlPoint::id);
 
         radii.start = law.front().radius;
         radii.end = law.back().radius;
@@ -1388,19 +1319,7 @@ void TaskFilletParameters::rebuildGizmos()
                     qOverload<double>(&Gui::QuantitySpinBox::valueChanged),
                     this,
                     [this, edgeName, id = points[pointIndex].id](double value) {
-                        auto edge = edgeRadii.find(edgeName);
-                        if (edge == edgeRadii.end()) {
-                            return;
-                        }
-                        const auto point
-                            = std::ranges::find(edge->second.controlPoints, id, &ControlPoint::id);
-                        if (point == edge->second.controlPoints.end()) {
-                            return;
-                        }
-                        editPoint(
-                            edgeName, id, point->position, value,
-                            getObject<PartDesign::Fillet>()->isRadiusControlPointAbsolute(edgeName, id)
-                        );
+                        editRadius(edgeName, id, value);
                     }
                 );
                 radiusEditor->bind(fillet->ensureRadiusControlPointValue(
@@ -1410,7 +1329,6 @@ void TaskFilletParameters::rebuildGizmos()
                     points[pointIndex].radius
                 ));
                 radiusEditor->setAutoApply(true);
-                auxiliaryControlPointEditors.push_back(radiusEditor);
             }
 
             if (!radiusEditor) {
@@ -1602,22 +1520,6 @@ void TaskFilletParameters::setRadiusControlsEnabled(bool enabled)
     ui->addControlPointButton->setEnabled(canEditPoints);
 }
 
-void TaskFilletParameters::updateRadiusTooltip(QListWidgetItem* item, const EdgeRadii& radii)
-{
-    const Base::Quantity start(radii.start, Base::Unit::Length);
-    const Base::Quantity end(radii.end, Base::Unit::Length);
-    if (isVariableRadius()) {
-        item->setToolTip(tr("Start radius: %1\nEnd radius: %2")
-                             .arg(QString::fromStdString(start.getUserString()))
-                             .arg(QString::fromStdString(end.getUserString())));
-    }
-    else {
-        const auto* fillet = getObject<PartDesign::Fillet>();
-        const Base::Quantity radius(fillet ? fillet->Radius.getValue() : radii.start, Base::Unit::Length);
-        item->setToolTip(tr("Radius: %1").arg(QString::fromStdString(radius.getUserString())));
-    }
-}
-
 void TaskFilletParameters::updateFilletTypeUi()
 {
     const bool variable = isVariableRadius();
@@ -1626,9 +1528,7 @@ void TaskFilletParameters::updateFilletTypeUi()
     if (gizmoContainer) {
         gizmoContainer->setOnTop(variable);
     }
-    ui->treeWidgetReferences->header()->show();
     ui->treeWidgetReferences->setColumnHidden(1, !variable);
-    ui->treeWidgetReferences->setRootIsDecorated(true);
     ui->activeEdgeLabel->setVisible(variable);
     if (auto* current = ui->listWidgetReferences->currentItem()) {
         ui->activeEdgeLabel->setText(current->text());
@@ -1655,7 +1555,6 @@ void TaskFilletParameters::updateFilletTypeUi()
     ui->checkBoxUseAllEdges->setEnabled(!variable);
     ui->checkBoxUseAllEdges->setVisible(!variable);
     ui->addControlPointButton->setEnabled(points && edge);
-    ui->filletTypeLabel->setText(tr("Mode"));
 
     if (radiusGizmo && radiusGizmo2) {
         radiusGizmo->setVisibility(variable || !ui->defaultRadiusEditor->hasExpression());
@@ -1793,14 +1692,6 @@ void TaskFilletParameters::syncRadiusLaw(const std::string& edgeName)
     fillet->setRadiusLaw(found->first, law);
     updatePreview();
     refreshEdgeTree();
-}
-
-void TaskFilletParameters::syncCurrentRadiusLaw()
-{
-    auto* current = ui->listWidgetReferences->currentItem();
-    if (current) {
-        syncRadiusLaw(current->text().toStdString());
-    }
 }
 
 bool TaskFilletParameters::hasPositionExpression(const std::string& edge, const std::string& id) const
@@ -2159,22 +2050,14 @@ void TaskFilletParameters::refreshPointTable()
                 qOverload<double>(&Gui::QuantitySpinBox::valueChanged),
                 this,
                 [this, name, id](double value) {
-                    const auto& radii = edgeRadii.at(name);
-                    const auto point = std::ranges::find(radii.controlPoints, id, &ControlPoint::id);
-                    const double t = id == "start" ? 0 : id == "end" ? 1 : point->position;
-                    editPoint(
-                        name,
-                        id,
-                        t,
-                        value,
-                        getObject<PartDesign::Fillet>()->isRadiusControlPointAbsolute(name, id)
-                    );
+                    editRadius(name, id, value);
                 }
             );
-            const auto editPosition = [this, id, name, absolute, length](double value) {
+            const auto editPosition = [this, id, name, absolute](double value) {
                 const auto& points = edgeRadii.at(name).controlPoints;
                 const auto point = std::ranges::find(points, id, &ControlPoint::id);
-                if (point != points.end()) {
+                const double length = edgeLength(name).value_or(0);
+                if (point != points.end() && (!absolute || length > Precision::Confusion())) {
                     editPoint(name, id, absolute ? value / length : value, point->radius, absolute);
                 }
             };
@@ -2196,7 +2079,6 @@ void TaskFilletParameters::refreshPointTable()
                 auto* position = new Gui::QuantitySpinBox;
                 position->setUnit(Base::Unit::Length);
                 position->setSingleStep(.1);
-                position->setRange(0, length);
                 configure(position, Component::Length, point.position * length);
                 connect(
                     position,
@@ -2221,6 +2103,7 @@ void TaskFilletParameters::refreshPointTable()
         auto* position = ui->controlPointTable->cellWidget(row, 1);
         QSignalBlocker positionBlocker(position);
         if (auto* quantity = qobject_cast<Gui::QuantitySpinBox*>(position)) {
+            quantity->setRange(0, length);
             quantity->setValue(point.position * length);
         }
         else {
@@ -2320,6 +2203,25 @@ void TaskFilletParameters::updatePreview()
     }
     setGizmoPositions();
 }
+void TaskFilletParameters::editRadius(const std::string& name, const std::string& id, double radius)
+{
+    const auto edge = edgeRadii.find(name);
+    if (edge == edgeRadii.end()) {
+        return;
+    }
+    double position = id == "end" ? 1 : 0;
+    if (id != "start" && id != "end") {
+        const auto& points = edge->second.controlPoints;
+        const auto point = std::ranges::find(points, id, &ControlPoint::id);
+        if (point == points.end()) {
+            return;
+        }
+        position = point->position;
+    }
+    editPoint(name, id, position, radius,
+              getObject<PartDesign::Fillet>()->isRadiusControlPointAbsolute(name, id));
+}
+
 void TaskFilletParameters::editPoint(
     const std::string& name, const std::string& id, double position, double radius, bool absolute
 )

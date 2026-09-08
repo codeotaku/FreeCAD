@@ -35,6 +35,7 @@
 
 #include <Inventor/elements/SoCacheElement.h>
 #include <algorithm>
+#include <Base/Tools.h>
 
 #include "So3DAnnotation.h"
 #include <Gui/Selection/Selection.h>
@@ -117,28 +118,9 @@ void SoDelayedAnnotationsElement::processDelayedPathsWithPriority(SoState* state
 
     SoPathList sortedPaths = getDelayedPaths(state);
 
-    class ProcessingStateGuard
-    {
-    public:
-        ProcessingStateGuard()
-            : previous(isProcessingDelayedPaths)
-        {
-            isProcessingDelayedPaths = Gui::Selection().isClarifySelectionActive();
-        }
-
-        ~ProcessingStateGuard()
-        {
-            isProcessingDelayedPaths = previous;
-        }
-
-        ProcessingStateGuard(const ProcessingStateGuard&) = delete;
-        ProcessingStateGuard(ProcessingStateGuard&&) = delete;
-        ProcessingStateGuard& operator=(const ProcessingStateGuard&) = delete;
-        ProcessingStateGuard& operator=(ProcessingStateGuard&&) = delete;
-
-    private:
-        bool previous;
-    } processingStateGuard;
+    Base::StateLocker processingStateGuard(
+        isProcessingDelayedPaths, Gui::Selection().isClarifySelectionActive()
+    );
 
     for (int index = 0; index < sortedPaths.getLength(); ++index) {
         SoPathList singlePath;

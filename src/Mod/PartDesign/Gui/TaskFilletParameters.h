@@ -67,7 +67,6 @@ private Q_SLOTS:
     void onStartRadiusChanged(double value);
     void onEndRadiusChanged(double value);
     void onFilletTypeChanged(int index);
-    void onAddControlPointToggled(bool checked);
     void onCurrentEdgeChanged(QListWidgetItem* current, QListWidgetItem* previous);
     void onRefDeleted() override;
     void onAddAllEdges();
@@ -115,12 +114,9 @@ private:
     EdgePositionGizmo* startPointGizmo = nullptr;
     EdgePositionGizmo* endPointGizmo = nullptr;
     std::vector<ControlPointGizmoSet> controlPointGizmos;
-    std::vector<Gui::QuantitySpinBox*> auxiliaryControlPointEditors;
     fastsignals::scoped_connection filletChangedConnection;
     bool addingControlPoint = false;
     bool controlPointRefreshQueued = false;
-    bool controlPointValueRefreshRequested = false;
-    bool controlPointGeometryRefreshRequested = false;
     std::string activePoint = "start";
     bool pointEditActive = false;
     void setupTaskPanel();
@@ -137,6 +133,7 @@ private:
     QLabel* errorLabel = nullptr;
     void selectPoint(const std::string& id);
     void updatePointHighlight();
+    void editRadius(const std::string& edge, const std::string& id, double radius);
     void editPoint(
         const std::string& edge,
         const std::string& id,
@@ -150,7 +147,6 @@ private:
     void finishPointEdit();
     void updatePreview();
 
-    void setupGizmos(ViewProviderDressUp* vp);
     void clearGizmos();
     void rebuildAllGizmos();
     void rebuildGizmos();
@@ -161,7 +157,6 @@ private:
     void syncEdgeTreeSelection();
     void setGizmoPositions();
     void setRadiusControlsEnabled(bool enabled);
-    void updateRadiusTooltip(QListWidgetItem* item, const EdgeRadii& radii);
     void updateFilletTypeUi();
     bool isVariableRadius() const;
     void ensureCurrentEdge();
@@ -171,7 +166,6 @@ private:
     std::optional<double> currentEdgeLength() const;
     std::optional<double> edgeLength(const std::string& edgeName) const;
     void syncRadiusLaw(const std::string& edgeName);
-    void syncCurrentRadiusLaw();
 };
 
 /// simulation dialog for the TaskView

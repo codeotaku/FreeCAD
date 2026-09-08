@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 
 #include <filesystem>
+#include <limits>
 
 #include <gtest/gtest.h>
 
@@ -51,6 +52,18 @@ protected:
     App::Document* document = nullptr;
     PartDesign::Fillet* fillet = nullptr;
 };
+
+TEST_F(FeatureFilletTest, NewControlPointIdsRemainUniqueWithLargeSuffixes)
+{
+    const auto maximum = std::numeric_limits<unsigned long>::max();
+    const std::vector<std::string> ids {
+        "cp1", "cp" + std::to_string(maximum - 1), "cp" + std::to_string(maximum)
+    };
+    fillet->setRadiusControlPointIds("Edge1", ids);
+    const auto next = fillet->newRadiusControlPointId("Edge1");
+    EXPECT_EQ(std::ranges::find(ids, next), ids.end());
+    EXPECT_EQ(fillet->getRadiusControlPointIds("Edge1"), ids);
+}
 
 TEST_F(FeatureFilletTest, VariableFilletMatchesDirectKernelBuild)
 {

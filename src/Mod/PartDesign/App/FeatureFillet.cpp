@@ -267,9 +267,6 @@ Part::FilletRadiusLaw Fillet::getRadiusLaw(
             const auto length = values.find(
                 controlPointValueKey(edgeName, ids[i], ControlPointComponent::Length)
             );
-            const auto radius = values.find(
-                controlPointValueKey(edgeName, ids[i], ControlPointComponent::Radius)
-            );
             const bool hasLengthExpression = length != values.end()
                 && getExpression(VariableRadiusControlPointValues.getItemPath(length->first)).expression;
             if (hasLengthExpression || isRadiusControlPointAbsolute(edgeName, ids[i])) {
@@ -299,17 +296,8 @@ Part::FilletRadiusLaw Fillet::getRadiusLaw(
                 }
                 law[i + 1].position = *parsed;
             }
-            if (radius != values.end()) {
-                const auto parsed = resolveControlPointValue(
-                    *this,
-                    radius->first,
-                    radius->second,
-                    ControlPointComponent::Radius
-                );
-                if (!parsed) {
-                    return {};
-                }
-                law[i + 1].radius = *parsed;
+            if (!applyRadius(ids[i], law[i + 1].radius)) {
+                return {};
             }
         }
     }
@@ -376,26 +364,14 @@ void Fillet::setRadiusControlPointIds(const std::string& edgeName, const std::ve
 
 std::string Fillet::newRadiusControlPointId(const std::string& edgeName) const
 {
-    unsigned long next = 1;
-    for (const auto& id : getRadiusControlPointIds(edgeName)) {
-        if (!id.starts_with("cp")) {
-            continue;
-        }
-        constexpr unsigned long decimalBase = 10;
-        unsigned long value = 0;
-        bool valid = id.size() > 2;
-        for (std::size_t i = 2; valid && i < id.size(); ++i) {
-            const char digit = id[i];
-            valid = digit >= '0' && digit <= '9';
-            if (valid) {
-                value = (value * decimalBase) + static_cast<unsigned long>(digit - '0');
-            }
-        }
-        if (valid) {
-            next = std::max(next, value + 1);
+    const auto ids = getRadiusControlPointIds(edgeName);
+    // Compare identities directly; parsing imported suffixes can overflow and reuse an existing ID.
+    for (std::size_t next = 1;; ++next) {
+        const auto id = "cp" + std::to_string(next);
+        if (std::ranges::find(ids, id) == ids.end()) {
+            return id;
         }
     }
-    return "cp" + std::to_string(next);
 }
 
 App::ObjectIdentifier Fillet::ensureRadiusControlPointValue(
