@@ -5,6 +5,8 @@
 #include <QTest>
 
 #include <App/Application.h>
+#include <App/Document.h>
+#include <App/DocumentObject.h>
 #include <Base/UnitsApi.h>
 
 #include "Gui/QuantitySpinBox.h"
@@ -228,6 +230,29 @@ private Q_SLOTS:
         QVERIFY(spinBox->hasValidInput());
 
         QCOMPARE(spinBox->isNormalized(), false);
+    }
+
+    void test_RebindingKeepsTextVisible()  // NOLINT
+    {
+        auto* doc = App::GetApplication().newDocument("QuantitySpinBoxRebinding");
+        auto* obj = doc->addObject("App::FeaturePython", "Values");
+        auto* property = obj->addDynamicProperty("App::PropertyLength", "Radius");
+        Gui::QuantitySpinBox editor;
+        editor.setUnit(Base::Unit::Length);
+        editor.setValue(2.0);
+        editor.resize(220, 30);
+        auto* text = editor.findChild<QLineEdit*>();
+        QVERIFY(text);
+        editor.bind(App::ObjectIdentifier(*property));
+        const auto margins = text->contentsMargins();
+        for (int i = 0; i < 30; ++i) {
+            editor.unbind();
+            editor.bind(App::ObjectIdentifier(*property));
+            QCOMPARE(text->contentsMargins(), margins);
+        }
+        QVERIFY(text->contentsRect().width() > text->fontMetrics().horizontalAdvance(text->text()));
+        editor.unbind();
+        App::GetApplication().closeDocument(doc->getName());
     }
 
 private:

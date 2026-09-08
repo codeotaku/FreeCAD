@@ -153,6 +153,8 @@ SET(PartDesignGuiTaskDlgs_SRCS
     TaskDefeaturingParameters.ui
     TaskDefeaturingParameters.cpp
     TaskDefeaturingParameters.h
+    FilletPointEditor.cpp
+    FilletPointEditor.h
     TaskDraftParameters.ui
     TaskDraftParameters.cpp
     TaskDraftParameters.h

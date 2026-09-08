@@ -61,6 +61,8 @@
 #include <BRepBuilderAPI_Transform.hxx>
 #include <BRepFilletAPI_MakeChamfer.hxx>
 #include <BRepFilletAPI_MakeFillet.hxx>
+#include <GCPnts_AbscissaPoint.hxx>
+#include <Law_Function.hxx>
 #include <BRepLib.hxx>
 #include <NCollection_Array1.hxx>
 #include <gp_Pnt2d.hxx>
@@ -4189,7 +4191,8 @@ TopoShape& TopoShape::makeElementFillet(
     const TopoShape& shape,
     const std::vector<TopoShape>& edges,
     const std::vector<FilletRadiusLaw>& radiusLaws,
-    const char* op
+    const char* op,
+    std::vector<FilletRadiusLaw>* sampledProfiles
 )
 {
     if (!op) {
@@ -4251,7 +4254,42 @@ TopoShape& TopoShape::makeElementFillet(
         }
         mkFillet.Add(values, TopoDS::Edge(edge));
     }
-    return makeElementShape(mkFillet, shape, op);
+    makeElementShape(mkFillet, shape, op);
+    if (sampledProfiles) {
+        sampledProfiles->clear();
+        for (const auto& edgeShape : edges) {
+            FilletRadiusLaw samples;
+            try {
+                const auto edge = TopoDS::Edge(edgeShape.getShape());
+                const int contour = mkFillet.Contour(edge);
+                double offset = 0;
+                for (int i = 1; i <= mkFillet.NbEdges(contour); ++i) {
+                    const auto& spineEdge = mkFillet.Edge(contour, i);
+                    BRepAdaptor_Curve curve(spineEdge);
+                    const double length = GCPnts_AbscissaPoint::Length(curve);
+                    if (!spineEdge.IsSame(edge)) {
+                        offset += length;
+                        continue;
+                    }
+                    const bool constant = mkFillet.IsConstant(contour, edge);
+                    const auto law = constant ? Handle(Law_Function)() : mkFillet.GetLaw(contour, edge);
+                    for (int sample = 0; sample <= 200; ++sample) {
+                        const double t = sample / 200.;
+                        const double radius = constant ? mkFillet.Radius(contour, edge)
+                                                       : law->Value(offset + t * length);
+                        samples.push_back({t, radius});
+                    }
+                    break;
+                }
+            }
+            catch (const Standard_Failure&) {
+                // Display data must never invalidate an otherwise successful fillet.
+                samples.clear();
+            }
+            sampledProfiles->push_back(std::move(samples));
+        }
+    }
+    return *this;
 }
 
 TopoShape& TopoShape::makeElementChamfer(

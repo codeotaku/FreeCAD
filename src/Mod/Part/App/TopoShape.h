@@ -2325,13 +2325,16 @@ public:
      * Each law is passed to OCCT as relative spine-position/radius pairs. It must contain at
      * least two points, start at position 0, end at position 1, have strictly increasing
      * normalized positions, and contain only finite, positive radii. The number of laws must
-     * match the number of edges.
+     * match the number of edges. If sampledProfiles is supplied, it receives
+     * radius samples from the built OCCT laws, in the same order as the edges.
+     * A law unavailable for display is represented by an empty sample vector.
      */
     TopoShape& makeElementFillet(
         const TopoShape& source,
         const std::vector<TopoShape>& edges,
         const std::vector<FilletRadiusLaw>& radiusLaws,
-        const char* op = nullptr
+        const char* op = nullptr,
+        std::vector<FilletRadiusLaw>* sampledProfiles = nullptr
     );
     /* Make fillet shape
      *

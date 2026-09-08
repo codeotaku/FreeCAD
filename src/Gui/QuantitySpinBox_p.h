@@ -49,7 +49,12 @@ public:
         if (auto parentLineEdit = qobject_cast<QLineEdit*>(parent())) {
             // horizontal margin, so text will not be behind the icon
             QMargins margins = parentLineEdit->contentsMargins();
-            margins.setRight(2 * margins.right() + sizeHint().width());
+            if (originalRightMargin < 0) {
+                originalRightMargin = margins.right();
+            }
+            // Rebinding calls show() again. Reserve the icon width once, rather
+            // than doubling the previous reservation until all text is clipped.
+            margins.setRight(2 * originalRightMargin + sizeHint().width());
             parentLineEdit->setContentsMargins(margins);
         }
         QLabel::show();
@@ -67,6 +72,7 @@ Q_SIGNALS:
     void clicked();
 
 private:
+    int originalRightMargin = -1;
     const QString genericExpressionEditorTooltip = tr("Enter expression… (=)");
     const QString expressionEditorTooltipPrefix = tr("Expression:") + QStringLiteral(" ");
 };

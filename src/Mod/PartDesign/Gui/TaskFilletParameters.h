@@ -29,6 +29,8 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
+#include <map>
+#include <QPointer>
 
 #include <Gui/Inventor/Draggers/Gizmo.h>
 
@@ -47,6 +49,7 @@ namespace PartDesignGui
 {
 
 class EdgePositionGizmo;
+class FilletPointEditor;
 
 class TaskFilletParameters: public TaskDressUpParameters
 {
@@ -57,6 +60,7 @@ public:
     ~TaskFilletParameters() override;
 
     void apply() override;
+    bool commitPointInput();
 
 private Q_SLOTS:
     void onStartRadiusChanged(double value);
@@ -67,11 +71,13 @@ private Q_SLOTS:
     void onRefDeleted() override;
     void onAddAllEdges();
     void onCheckBoxUseAllEdgesToggled(bool checked);
+    void onDefaultRadiusChanged(double value);
 
 protected:
     void setButtons(const selectionModes mode) override;
     void changeEvent(QEvent* e) override;
     void onSelectionChanged(const Gui::SelectionChanges& msg) override;
+    bool eventFilter(QObject* watched, QEvent* event) override;
 
 private:
     struct ControlPoint
@@ -105,6 +111,8 @@ private:
     std::unique_ptr<Gui::GizmoContainer> gizmoContainer;
     Gui::LinearGizmo* radiusGizmo = nullptr;
     Gui::LinearGizmo* radiusGizmo2 = nullptr;
+    EdgePositionGizmo* startPointGizmo = nullptr;
+    EdgePositionGizmo* endPointGizmo = nullptr;
     std::vector<ControlPointGizmoSet> controlPointGizmos;
     std::vector<Gui::QuantitySpinBox*> auxiliaryControlPointEditors;
     std::vector<Gui::QuantitySpinBox*> controlPointPositionEditors;
@@ -115,6 +123,30 @@ private:
     bool controlPointRefreshQueued = false;
     bool controlPointValueRefreshRequested = false;
     bool controlPointGeometryRefreshRequested = false;
+    FilletPointEditor* pointEditor = nullptr;
+    QPointer<FilletPointEditor> inlineEditor;
+    std::string activePoint = "start";
+    bool refreshingEditor = false;
+    struct EditState
+    {
+        std::map<std::string, std::string> laws, ids, values;
+        std::shared_ptr<App::Property> expressions;
+    };
+    std::vector<EditState> editUndo, editRedo;
+    std::optional<EditState> pendingEdit;
+    void setupPointEditor();
+    void refreshPointEditor();
+    void updateInlinePlacement();
+    void selectPoint(const std::string& id);
+    void editPoint(const std::string& id, double position, double radius, bool absolute);
+    void insertPoint(double position);
+    void pointAction(const std::string& action);
+    std::vector<std::string> selectedPointIds() const;
+    EditState captureEdit() const;
+    void restoreEdit(const EditState& state);
+    void beginPointEdit();
+    void finishPointEdit();
+    void updatePreview();
 
     void setupGizmos(ViewProviderDressUp* vp);
     void clearGizmos();
@@ -123,7 +155,6 @@ private:
     void rebuildControlPointTable();
     void refreshEdgeTree();
     void refreshControlPointValuesFromModel();
-    void refreshControlPointLengthsFromGeometry();
     void activateEdge(const std::string& edgeName);
     void selectEdgeTreeItem(const QString& edgeName);
     void syncEdgeTreeSelection();
@@ -137,6 +168,7 @@ private:
     bool addControlPointFromSelection(const Gui::SelectionChanges& msg);
     std::optional<Part::TopoShape> currentEdgeShape() const;
     std::optional<double> currentEdgeLength() const;
+    std::optional<double> edgeLength(const std::string& edgeName) const;
     void syncRadiusLaw(const std::string& edgeName);
     void syncCurrentRadiusLaw();
 };

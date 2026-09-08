@@ -7,18 +7,13 @@
     <x>0</x>
     <y>0</y>
     <width>439</width>
-    <height>560</height>
+    <height>390</height>
    </rect>
   </property>
   <property name="windowTitle">
    <string notr="true">Form</string>
   </property>
-  <property name="minimumSize">
-   <size>
-    <width>0</width>
-    <height>520</height>
-   </size>
-  </property>
+
   <layout class="QVBoxLayout" name="verticalLayout">
    <item>
     <widget class="QToolButton" name="buttonRefSel">
@@ -34,45 +29,78 @@
     </widget>
    </item>
    <item>
-    <widget class="QTreeWidget" name="treeWidgetReferences">
-     <property name="minimumSize">
-      <size>
-       <width>0</width>
-       <height>140</height>
-      </size>
+    <widget class="QFrame" name="referencesFrame">
+     <property name="frameShape">
+      <enum>QFrame::StyledPanel</enum>
      </property>
-     <property name="toolTip">
-      <string>Select an edge to edit its variable-radius points.</string>
+     <property name="frameShadow">
+      <enum>QFrame::Sunken</enum>
      </property>
-     <property name="selectionMode">
-      <enum>QAbstractItemView::ExtendedSelection</enum>
-     </property>
-     <property name="rootIsDecorated">
-      <bool>true</bool>
-     </property>
-     <attribute name="headerVisible">
-      <bool>true</bool>
-     </attribute>
-     <column>
-      <property name="text">
-       <string>Element</string>
+     <layout class="QVBoxLayout" name="referencesFrameLayout">
+      <property name="leftMargin">
+       <number>0</number>
       </property>
-     </column>
-     <column>
-      <property name="text">
-       <string>Radius</string>
+      <property name="topMargin">
+       <number>0</number>
       </property>
-     </column>
-     <column>
-      <property name="text">
-       <string>Parameter</string>
+      <property name="rightMargin">
+       <number>0</number>
       </property>
-     </column>
-     <column>
-      <property name="text">
-       <string>Length</string>
+      <property name="bottomMargin">
+       <number>0</number>
       </property>
-     </column>
+      <item>
+       <widget class="QTreeWidget" name="treeWidgetReferences">
+        <property name="minimumSize">
+         <size>
+          <width>0</width>
+          <height>92</height>
+         </size>
+        </property>
+        <property name="maximumSize">
+         <size>
+          <width>16777215</width>
+          <height>140</height>
+         </size>
+        </property>
+        <property name="frameShape">
+         <enum>QFrame::NoFrame</enum>
+        </property>
+        <property name="toolTip">
+         <string>Select an edge to edit its variable-radius points.</string>
+        </property>
+        <property name="selectionMode">
+         <enum>QAbstractItemView::ExtendedSelection</enum>
+        </property>
+        <property name="rootIsDecorated">
+         <bool>true</bool>
+        </property>
+        <attribute name="headerVisible">
+         <bool>true</bool>
+        </attribute>
+        <column>
+         <property name="text">
+          <string>Element</string>
+         </property>
+        </column>
+        <column>
+         <property name="text">
+          <string>Radius</string>
+         </property>
+        </column>
+        <column>
+         <property name="text">
+          <string>Parameter</string>
+         </property>
+        </column>
+        <column>
+         <property name="text">
+          <string>Length</string>
+         </property>
+        </column>
+       </widget>
+      </item>
+     </layout>
     </widget>
    </item>
    <item>
@@ -96,9 +124,6 @@
      </item>
      <item>
       <widget class="QComboBox" name="filletType">
-       <property name="currentIndex">
-        <number>0</number>
-       </property>
        <item>
         <property name="text">
          <string>Constant Radius</string>
@@ -109,6 +134,24 @@
          <string>Variable Radius</string>
         </property>
        </item>
+      </widget>
+     </item>
+    </layout>
+   </item>
+   <item>
+    <layout class="QHBoxLayout" name="defaultRadiusLayout">
+     <item>
+      <widget class="QLabel" name="defaultRadiusLabel">
+       <property name="text">
+        <string>Default radius</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="Gui::QuantitySpinBox" name="defaultRadiusEditor">
+       <property name="keyboardTracking">
+        <bool>false</bool>
+       </property>
       </widget>
      </item>
     </layout>
@@ -211,8 +254,20 @@
      <property name="minimumSize">
       <size>
        <width>0</width>
+       <height>92</height>
+      </size>
+     </property>
+     <property name="maximumSize">
+      <size>
+       <width>16777215</width>
        <height>132</height>
       </size>
+     </property>
+     <property name="frameShape">
+      <enum>QFrame::StyledPanel</enum>
+     </property>
+     <property name="frameShadow">
+      <enum>QFrame::Sunken</enum>
      </property>
      <property name="columnCount">
       <number>5</number>
@@ -262,7 +317,7 @@
      <item>
       <widget class="QToolButton" name="addControlPointButton">
        <property name="toolTip">
-        <string>Add a control point by clicking the active edge</string>
+        <string>Add a control point by clicking any selected edge</string>
        </property>
        <property name="text">
         <string>Add control point</string>
@@ -294,6 +349,7 @@
   <tabstop>buttonRefSel</tabstop>
   <tabstop>treeWidgetReferences</tabstop>
   <tabstop>filletType</tabstop>
+  <tabstop>defaultRadiusEditor</tabstop>
   <tabstop>filletRadius</tabstop>
   <tabstop>filletEndRadius</tabstop>
   <tabstop>controlPointTable</tabstop>

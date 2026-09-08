@@ -31,8 +31,10 @@
 
 #include <BRepAlgo.hxx>
 #include <BRepFilletAPI_MakeFillet.hxx>
+#include <BRepGProp.hxx>
 #include <BRep_Tool.hxx>
 #include <Geom_Circle.hxx>
+#include <GProp_GProps.hxx>
 #include <TopoDS.hxx>
 #include <TopoDS_Edge.hxx>
 #include <TopExp_Explorer.hxx>
@@ -67,9 +69,19 @@ std::string controlPointValueKey(
     PartDesign::Fillet::ControlPointComponent component
 )
 {
-    return edgeName + '|' + id
-        + (component == PartDesign::Fillet::ControlPointComponent::Position ? "|position"
-                                                                           : "|radius");
+    const char* suffix = nullptr;
+    switch (component) {
+        case PartDesign::Fillet::ControlPointComponent::Position:
+            suffix = "|position";
+            break;
+        case PartDesign::Fillet::ControlPointComponent::Length:
+            suffix = "|length";
+            break;
+        case PartDesign::Fillet::ControlPointComponent::Radius:
+            suffix = "|radius";
+            break;
+    }
+    return edgeName + '|' + id + suffix;
 }
 
 std::string serializeNumber(double value)
@@ -184,7 +196,10 @@ void Fillet::setRadiusLaw(const std::string& edgeName, const Part::FilletRadiusL
     VariableRadiusData.setValue(edgeName, stream.str());
 }
 
-Part::FilletRadiusLaw Fillet::getRadiusLaw(const std::string& edgeName) const
+Part::FilletRadiusLaw Fillet::getRadiusLaw(
+    const std::string& edgeName,
+    std::optional<double> edgeLength
+) const
 {
     Part::FilletRadiusLaw law;
     std::istringstream stream(VariableRadiusData.getValue(edgeName));
@@ -211,17 +226,61 @@ Part::FilletRadiusLaw Fillet::getRadiusLaw(const std::string& edgeName) const
             return {};
         }
     }
+    const auto& values = VariableRadiusControlPointValues.getValues();
+    const auto applyRadius = [this, &values, &edgeName](const std::string& id, double& radius) {
+        const auto value = values.find(
+            controlPointValueKey(edgeName, id, ControlPointComponent::Radius)
+        );
+        if (value == values.end()) {
+            return true;
+        }
+        const auto resolved = resolveControlPointValue(
+            *this,
+            value->first,
+            value->second,
+            ControlPointComponent::Radius
+        );
+        if (!resolved) {
+            return false;
+        }
+        radius = *resolved;
+        return true;
+    };
+    if (law.size() >= 2
+        && (!applyRadius("start", law.front().radius) || !applyRadius("end", law.back().radius))) {
+        return {};
+    }
+
     const auto ids = getRadiusControlPointIds(edgeName);
     if (ids.size() == (law.size() >= 2 ? law.size() - 2 : 0)) {
-        const auto& values = VariableRadiusControlPointValues.getValues();
         for (std::size_t i = 0; i < ids.size(); ++i) {
             const auto position = values.find(
                 controlPointValueKey(edgeName, ids[i], ControlPointComponent::Position)
             );
+            const auto length = values.find(
+                controlPointValueKey(edgeName, ids[i], ControlPointComponent::Length)
+            );
             const auto radius = values.find(
                 controlPointValueKey(edgeName, ids[i], ControlPointComponent::Radius)
             );
-            if (position != values.end()) {
+            const bool hasLengthExpression = length != values.end()
+                && getExpression(VariableRadiusControlPointValues.getItemPath(length->first)).expression;
+            if (hasLengthExpression || isRadiusControlPointAbsolute(edgeName, ids[i])) {
+                if (length == values.end()) {
+                    return {};
+                }
+                const auto parsed = resolveControlPointValue(
+                    *this,
+                    length->first,
+                    length->second,
+                    ControlPointComponent::Length
+                );
+                if (!parsed || !edgeLength || *edgeLength <= Precision::Confusion()) {
+                    return {};
+                }
+                law[i + 1].position = *parsed / *edgeLength;
+            }
+            else if (position != values.end()) {
                 const auto parsed = resolveControlPointValue(
                     *this,
                     position->first,
@@ -263,16 +322,17 @@ std::vector<std::string> Fillet::getRadiusControlPointIds(const std::string& edg
     return ids;
 }
 
-void Fillet::setRadiusControlPointIds(
-    const std::string& edgeName,
-    const std::vector<std::string>& ids
-)
+void Fillet::setRadiusControlPointIds(const std::string& edgeName, const std::vector<std::string>& ids)
 {
     const auto previous = getRadiusControlPointIds(edgeName);
     for (const auto& id : previous) {
         if (std::ranges::find(ids, id) == ids.end()) {
+            VariableRadiusControlPointValues.deleteValue(edgeName + '|' + id + "|absolute");
             VariableRadiusControlPointValues.deleteValue(
                 controlPointValueKey(edgeName, id, ControlPointComponent::Position)
+            );
+            VariableRadiusControlPointValues.deleteValue(
+                controlPointValueKey(edgeName, id, ControlPointComponent::Length)
             );
             VariableRadiusControlPointValues.deleteValue(
                 controlPointValueKey(edgeName, id, ControlPointComponent::Radius)
@@ -341,10 +401,34 @@ void Fillet::setRadiusControlPointValue(
     );
 }
 
+bool Fillet::isRadiusControlPointAbsolute(const std::string& edgeName, const std::string& id) const
+{
+    return VariableRadiusControlPointValues.getValue(edgeName + '|' + id + "|absolute") == "1";
+}
+
+void Fillet::setRadiusControlPointPosition(
+    const std::string& edgeName,
+    const std::string& id,
+    double position,
+    double edgeLength,
+    bool absolute
+)
+{
+    setRadiusControlPointValue(edgeName, id, ControlPointComponent::Position, position);
+    setRadiusControlPointValue(edgeName, id, ControlPointComponent::Length, position * edgeLength);
+    VariableRadiusControlPointValues.setValue(edgeName + '|' + id + "|absolute", absolute ? "1" : "0");
+}
+
 void Fillet::clearRadiusControlPoints(const std::string& edgeName)
 {
     setRadiusControlPointIds(edgeName, {});
     VariableRadiusControlPointIds.deleteValue(edgeName);
+    VariableRadiusControlPointValues.deleteValue(
+        controlPointValueKey(edgeName, "start", ControlPointComponent::Radius)
+    );
+    VariableRadiusControlPointValues.deleteValue(
+        controlPointValueKey(edgeName, "end", ControlPointComponent::Radius)
+    );
 }
 
 short Fillet::mustExecute() const
@@ -373,8 +457,7 @@ App::DocumentObjectExecReturn* Fillet::execute()
     }
     baseShape.setTransform(Base::Matrix4D());
 
-    const bool variableRadius
-        = RadiusMode.getValue() == static_cast<int>(RadiusModeValue::Variable);
+    const bool variableRadius = RadiusMode.getValue() == static_cast<int>(RadiusModeValue::Variable);
     std::vector<TopoShape> edges;
     std::vector<Part::FilletRadiusLaw> radiusLaws;
 
@@ -397,17 +480,17 @@ App::DocumentObjectExecReturn* Fillet::execute()
         for (std::size_t i = 0; i < storedRefs.size(); ++i) {
             auto edge = baseShape.getSubTopoShape(resolvedRefs[i].c_str(), true);
             if (edge.isNull() || edge.shapeType() != TopAbs_EDGE) {
-                return new App::DocumentObjectExecReturn(
-                    QT_TRANSLATE_NOOP(
-                        "Exception",
-                        "Variable-radius fillets require explicit edge selections"
-                    )
-                );
+                return new App::DocumentObjectExecReturn(QT_TRANSLATE_NOOP(
+                    "Exception",
+                    "Variable-radius fillets require explicit edge selections"
+                ));
             }
 
             Part::FilletRadiusLaw law;
             if (storedLaws.contains(storedRefs[i])) {
-                law = getRadiusLaw(storedRefs[i]);
+                GProp_GProps edgeProperties;
+                BRepGProp::LinearProperties(edge.getShape(), edgeProperties);
+                law = getRadiusLaw(storedRefs[i], edgeProperties.Mass());
                 if (law.empty()) {
                     return new App::DocumentObjectExecReturn(
                         QT_TRANSLATE_NOOP("Exception", "Invalid stored variable-radius law")
@@ -441,6 +524,7 @@ App::DocumentObjectExecReturn* Fillet::execute()
 
     try {
         TopoShape shape(0);  //,getDocument()->getStringHasher());
+        std::vector<Part::FilletRadiusLaw> profiles;
 
         // Add signal handler for segfault protection
 #if defined(__GNUC__) && defined(FC_OS_LINUX)
@@ -448,7 +532,7 @@ App::DocumentObjectExecReturn* Fillet::execute()
 #endif
 
         if (variableRadius) {
-            shape.makeElementFillet(baseShape, edges, radiusLaws);
+            shape.makeElementFillet(baseShape, edges, radiusLaws, nullptr, &profiles);
         }
         else {
             shape.makeElementFillet(baseShape, edges, Radius.getValue(), Radius.getValue());
@@ -483,6 +567,7 @@ App::DocumentObjectExecReturn* Fillet::execute()
 
         shape = getSolid(shape);
         this->Shape.setValue(shape);
+        radiusProfiles = std::move(profiles);
         return App::DocumentObject::StdReturn;
     }
     catch (Base::Exception& e) {

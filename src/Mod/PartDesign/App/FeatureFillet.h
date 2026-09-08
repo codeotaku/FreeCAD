@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -66,19 +67,20 @@ public:
     void setRadiusLaw(const std::string& edgeName, const Part::FilletRadiusLaw& law);
 
     /** Return the persisted law for an edge, or an empty law if no valid data is stored. */
-    Part::FilletRadiusLaw getRadiusLaw(const std::string& edgeName) const;
+    Part::FilletRadiusLaw getRadiusLaw(
+        const std::string& edgeName,
+        std::optional<double> edgeLength = std::nullopt
+    ) const;
 
     enum class ControlPointComponent
     {
         Position,
+        Length,
         Radius
     };
 
     std::vector<std::string> getRadiusControlPointIds(const std::string& edgeName) const;
-    void setRadiusControlPointIds(
-        const std::string& edgeName,
-        const std::vector<std::string>& ids
-    );
+    void setRadiusControlPointIds(const std::string& edgeName, const std::vector<std::string>& ids);
     std::string newRadiusControlPointId(const std::string& edgeName) const;
     App::ObjectIdentifier ensureRadiusControlPointValue(
         const std::string& edgeName,
@@ -93,6 +95,18 @@ public:
         double value
     );
     void clearRadiusControlPoints(const std::string& edgeName);
+    // Transient display data from the last successful kernel build, not document properties.
+    const std::vector<Part::FilletRadiusLaw>& getRadiusProfiles() const { return radiusProfiles; }
+
+    // Literal distances and proportions are different persistent design intents.
+    bool isRadiusControlPointAbsolute(const std::string& edgeName, const std::string& id) const;
+    void setRadiusControlPointPosition(
+        const std::string& edgeName,
+        const std::string& id,
+        double position,
+        double edgeLength,
+        bool absolute
+    );
 
     /** @name methods override feature */
     //@{
@@ -107,6 +121,7 @@ public:
     //@}
 
 protected:
+    std::vector<Part::FilletRadiusLaw> radiusProfiles;
     void Restore(Base::XMLReader& reader) override;
     void handleChangedPropertyType(
         Base::XMLReader& reader,
