@@ -38,8 +38,6 @@
 
 class Ui_TaskFilletParameters;
 class QComboBox;
-class QToolButton;
-class QLabel;
 
 namespace Gui
 {
@@ -127,10 +125,7 @@ private:
     void refreshPointTable();
     void changeRadiusLaw(int index);
     bool currentLawIsVariable() const;
-    QComboBox* radiusLaw = nullptr;
     QComboBox* positionUnits = nullptr;
-    QToolButton* removePointButton = nullptr;
-    QLabel* errorLabel = nullptr;
     void selectPoint(const std::string& id);
     void updatePointHighlight();
     void editRadius(const std::string& edge, const std::string& id, double radius);
