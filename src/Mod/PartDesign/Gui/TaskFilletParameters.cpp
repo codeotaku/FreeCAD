@@ -1909,7 +1909,6 @@ void TaskFilletParameters::refreshPointTable()
             auto* radius = new Gui::QuantitySpinBox;
             radius->setObjectName(QStringLiteral("pointRadius_%1").arg(QString::fromStdString(id)));
             radius->setUnit(Base::Unit::Length);
-            radius->setSingleStep(.1);
             radius->setMinimum(Precision::Confusion());
             radius->setKeyboardTracking(false);
             radius->bind(
@@ -1952,7 +1951,6 @@ void TaskFilletParameters::refreshPointTable()
             if (absolute) {
                 auto* position = new Gui::QuantitySpinBox;
                 position->setUnit(Base::Unit::Length);
-                position->setSingleStep(.1);
                 configure(position, Component::Length, point.position * length);
                 connect(
                     position,
@@ -1965,7 +1963,8 @@ void TaskFilletParameters::refreshPointTable()
                 auto* position = new FilletPercentSpinBox;
                 position->setDecimals(6);
                 position->setRange(0, 1);
-                position->setSingleStep(.01);
+                // Store fractions while stepping in displayed percentage points.
+                position->setSingleStep(position->singleStep() / 100);
                 position->setSuffix(QStringLiteral(" %"));
                 configure(position, Component::Position, point.position);
                 connect(position, qOverload<double>(&Gui::DoubleSpinBox::valueChanged), this, editPosition);
