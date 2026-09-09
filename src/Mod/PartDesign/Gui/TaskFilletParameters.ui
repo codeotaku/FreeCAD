@@ -179,172 +179,166 @@
     </layout>
    </item>
    <item>
-    <layout class="QGridLayout" name="radiusLayout" columnstretch="0,1,1">
-     <item row="0" column="0" colspan="3">
-      <widget class="QLabel" name="activeEdgeLabel">
-       <property name="font">
-        <font>
-         <bold>true</bold>
-        </font>
-       </property>
-       <property name="text">
-        <string>Select an edge to edit its radius</string>
-       </property>
-      </widget>
-     </item>
-     <item row="1" column="0">
-      <widget class="QLabel" name="radiusLawLabel">
-       <property name="text">
-        <string>Radius law</string>
-       </property>
-      </widget>
-     </item>
-     <item row="1" column="1" colspan="2">
-      <widget class="QComboBox" name="radiusLaw">
-       <item>
-        <property name="text">
-         <string>Constant</string>
+    <widget class="QWidget" name="edgeParameters">
+     <layout class="QVBoxLayout" name="edgeParametersLayout">
+      <item>
+       <layout class="QGridLayout" name="radiusLayout" columnstretch="0,1,1">
+        <item row="0" column="0">
+         <widget class="QLabel" name="radiusLawLabel">
+          <property name="text">
+           <string>Radius law</string>
+          </property>
+         </widget>
+        </item>
+        <item row="0" column="1" colspan="2">
+         <widget class="QComboBox" name="radiusLaw">
+          <item>
+           <property name="text">
+            <string>Constant</string>
+           </property>
+          </item>
+          <item>
+           <property name="text">
+            <string>Variable</string>
+           </property>
+          </item>
+         </widget>
+        </item>
+        <item row="1" column="0">
+         <widget class="QLabel" name="startRadiusLabel">
+          <property name="text">
+           <string>Start radius</string>
+          </property>
+         </widget>
+        </item>
+        <item row="1" column="1" colspan="2">
+         <widget class="Gui::QuantitySpinBox" name="filletRadius">
+          <property name="toolTip">
+           <string>Fillet radius at the start of the selected edge</string>
+          </property>
+          <property name="keyboardTracking">
+           <bool>false</bool>
+          </property>
+         </widget>
+        </item>
+        <item row="2" column="2">
+         <widget class="Gui::QuantitySpinBox" name="filletEndRadius">
+          <property name="toolTip">
+           <string>Fillet radius at the end of the selected edge</string>
+          </property>
+          <property name="keyboardTracking">
+           <bool>false</bool>
+          </property>
+         </widget>
+        </item>
+       </layout>
+      </item>
+      <item>
+       <widget class="QTableWidget" name="controlPointTable">
+        <property name="showGrid">
+         <bool>false</bool>
         </property>
-       </item>
-       <item>
-        <property name="text">
-         <string>Variable</string>
+        <property name="selectionMode">
+         <enum>QAbstractItemView::SingleSelection</enum>
         </property>
-       </item>
-      </widget>
-     </item>
-     <item row="2" column="0">
-      <widget class="QLabel" name="startRadiusLabel">
-       <property name="text">
-        <string>Start radius</string>
-       </property>
-      </widget>
-     </item>
-     <item row="2" column="1" colspan="2">
-      <widget class="Gui::QuantitySpinBox" name="filletRadius">
-       <property name="toolTip">
-        <string>Fillet radius at the start of the selected edge</string>
-       </property>
-       <property name="keyboardTracking">
-        <bool>false</bool>
-       </property>
-      </widget>
-     </item>
-     <item row="3" column="2">
-      <widget class="Gui::QuantitySpinBox" name="filletEndRadius">
-       <property name="toolTip">
-        <string>Fillet radius at the end of the selected edge</string>
-       </property>
-       <property name="keyboardTracking">
-        <bool>false</bool>
-       </property>
-      </widget>
-     </item>
-    </layout>
-   </item>
-   <item>
-    <widget class="QTableWidget" name="controlPointTable">
-     <property name="showGrid">
-      <bool>false</bool>
-     </property>
-     <property name="selectionMode">
-      <enum>QAbstractItemView::SingleSelection</enum>
-     </property>
-     <property name="selectionBehavior">
-      <enum>QAbstractItemView::SelectItems</enum>
-     </property>
-     <property name="editTriggers">
-      <set>QAbstractItemView::NoEditTriggers</set>
-     </property>
-     <property name="tabKeyNavigation">
-      <bool>false</bool>
-     </property>
-     <property name="minimumSize">
-      <size>
-       <width>0</width>
-       <height>150</height>
-      </size>
-     </property>
-     <property name="maximumSize">
-      <size>
-       <width>16777215</width>
-       <height>200</height>
-      </size>
-     </property>
-     <property name="frameShape">
-      <enum>QFrame::StyledPanel</enum>
-     </property>
-     <property name="frameShadow">
-      <enum>QFrame::Sunken</enum>
-     </property>
-     <property name="columnCount">
-      <number>3</number>
-     </property>
-     <attribute name="verticalHeaderVisible">
-      <bool>false</bool>
-     </attribute>
-     <column>
-      <property name="text">
-       <string/>
-      </property>
-     </column>
-     <column>
-      <property name="text">
-       <string>Position</string>
-      </property>
-     </column>
-     <column>
-      <property name="text">
-       <string>Radius</string>
-      </property>
-     </column>
+        <property name="selectionBehavior">
+         <enum>QAbstractItemView::SelectItems</enum>
+        </property>
+        <property name="editTriggers">
+         <set>QAbstractItemView::NoEditTriggers</set>
+        </property>
+        <property name="tabKeyNavigation">
+         <bool>false</bool>
+        </property>
+        <property name="minimumSize">
+         <size>
+          <width>0</width>
+          <height>150</height>
+         </size>
+        </property>
+        <property name="maximumSize">
+         <size>
+          <width>16777215</width>
+          <height>200</height>
+         </size>
+        </property>
+        <property name="frameShape">
+         <enum>QFrame::StyledPanel</enum>
+        </property>
+        <property name="frameShadow">
+         <enum>QFrame::Sunken</enum>
+        </property>
+        <property name="columnCount">
+         <number>3</number>
+        </property>
+        <attribute name="verticalHeaderVisible">
+         <bool>false</bool>
+        </attribute>
+        <column>
+         <property name="text">
+          <string/>
+         </property>
+        </column>
+        <column>
+         <property name="text">
+          <string>Position</string>
+         </property>
+        </column>
+        <column>
+         <property name="text">
+          <string>Radius</string>
+         </property>
+        </column>
+       </widget>
+      </item>
+      <item>
+       <layout class="QHBoxLayout" name="controlPointActionsLayout">
+        <item>
+         <widget class="QToolButton" name="addControlPointButton">
+          <property name="toolTip">
+           <string>Add a control point by clicking any selected edge</string>
+          </property>
+          <property name="text">
+           <string>+ Add control point</string>
+          </property>
+          <property name="checkable">
+           <bool>true</bool>
+          </property>
+          <property name="toolButtonStyle">
+           <enum>Qt::ToolButtonTextOnly</enum>
+          </property>
+          <property name="focusPolicy">
+           <enum>Qt::StrongFocus</enum>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <spacer name="controlPointActionsSpacer">
+          <property name="orientation">
+           <enum>Qt::Horizontal</enum>
+          </property>
+          <property name="sizeHint" stdset="0">
+           <size>
+            <width>0</width>
+            <height>0</height>
+           </size>
+          </property>
+         </spacer>
+        </item>
+        <item>
+         <widget class="QToolButton" name="removeControlPoint">
+          <property name="toolTip">
+           <string>Remove selected control point</string>
+          </property>
+          <property name="focusPolicy">
+           <enum>Qt::StrongFocus</enum>
+          </property>
+         </widget>
+        </item>
+       </layout>
+      </item>
+     </layout>
     </widget>
-   </item>
-   <item>
-    <layout class="QHBoxLayout" name="controlPointActionsLayout">
-     <item>
-      <widget class="QToolButton" name="addControlPointButton">
-       <property name="toolTip">
-        <string>Add a control point by clicking any selected edge</string>
-       </property>
-       <property name="text">
-        <string>+ Add control point</string>
-       </property>
-       <property name="checkable">
-        <bool>true</bool>
-       </property>
-       <property name="toolButtonStyle">
-        <enum>Qt::ToolButtonTextOnly</enum>
-       </property>
-       <property name="focusPolicy">
-        <enum>Qt::StrongFocus</enum>
-       </property>
-      </widget>
-     </item>
-     <item>
-      <spacer name="controlPointActionsSpacer">
-       <property name="orientation">
-        <enum>Qt::Horizontal</enum>
-       </property>
-       <property name="sizeHint" stdset="0">
-        <size>
-         <width>0</width>
-         <height>0</height>
-        </size>
-       </property>
-      </spacer>
-     </item>
-     <item>
-      <widget class="QToolButton" name="removeControlPoint">
-       <property name="toolTip">
-        <string>Remove selected control point</string>
-       </property>
-       <property name="focusPolicy">
-        <enum>Qt::StrongFocus</enum>
-       </property>
-      </widget>
-     </item>
-    </layout>
    </item>
    <item>
     <widget class="QCheckBox" name="checkBoxUseAllEdges">

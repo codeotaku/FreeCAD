@@ -59,6 +59,7 @@ public:
     ~TaskFilletParameters() override;
 
     void apply() override;
+    Gui::TaskView::TaskBox* edgeBox = nullptr;
     Gui::TaskView::TaskBox* advancedBox = nullptr;
 
 private Q_SLOTS:

@@ -661,7 +661,6 @@ void TaskFilletParameters::onCheckBoxUseAllEdgesToggled(bool checked)
         fillet->recomputeFeature();
 
         if (checked) {
-            ui->activeEdgeLabel->setText(tr("Radius for all edges"));
             setRadiusControlsEnabled(!isVariableRadius());
             if (gizmoContainer) {
                 gizmoContainer->visible = false;
@@ -848,7 +847,6 @@ void TaskFilletParameters::onCurrentEdgeChanged(
         setAddControlPointMode(false);
     }
     if (ui->checkBoxUseAllEdges->isChecked()) {
-        ui->activeEdgeLabel->setText(tr("Radius for all edges"));
         setRadiusControlsEnabled(!isVariableRadius());
         if (gizmoContainer) {
             gizmoContainer->visible = false;
@@ -857,10 +855,6 @@ void TaskFilletParameters::onCurrentEdgeChanged(
     }
 
     if (!current) {
-        ui->activeEdgeLabel->setText(
-            isVariableRadius() ? tr("Select an edge to edit its radii")
-                               : tr("Select an edge to edit its radius")
-        );
         setRadiusControlsEnabled(false);
         clearGizmos();
         ui->controlPointTable->setRowCount(0);
@@ -876,17 +870,12 @@ void TaskFilletParameters::onCurrentEdgeChanged(
                   .first;
     const auto& radii = it->second;
     if (isVariableRadius() && !currentEdgeShape()) {
-        ui->activeEdgeLabel->setText(tr("Select an edge in this face group"));
         setRadiusControlsEnabled(false);
         clearGizmos();
         ui->controlPointTable->setRowCount(0);
         updateFilletTypeUi();
         return;
     }
-    ui->activeEdgeLabel->setText(
-        isVariableRadius() ? tr("Radii for %1").arg(current->text())
-                           : tr("Radius for %1").arg(current->text())
-    );
 
     auto* fillet = getObject<PartDesign::Fillet>();
     if (isVariableRadius() && fillet) {
@@ -1465,9 +1454,11 @@ void TaskFilletParameters::updateFilletTypeUi()
         gizmoContainer->setOnTop(variable);
     }
     ui->treeWidgetReferences->setColumnHidden(1, !variable);
-    ui->activeEdgeLabel->setVisible(variable);
-    if (auto* current = ui->listWidgetReferences->currentItem()) {
-        ui->activeEdgeLabel->setText(current->text());
+    const auto* current = ui->listWidgetReferences->currentItem();
+    const bool selectedEdge = variable && edge && current && current->isSelected();
+    edgeBox->setVisible(selectedEdge);
+    if (selectedEdge) {
+        edgeBox->setHeaderText(current->text());
     }
     ui->startRadiusLabel->setVisible(variable && !points);
     ui->startRadiusLabel->setText(tr("Radius"));
@@ -1487,7 +1478,7 @@ void TaskFilletParameters::updateFilletTypeUi()
     ui->defaultRadiusLabel->setText(variable ? tr("Default Radius") : tr("Radius"));
     ui->defaultRadiusLabel->setVisible(!variable || points);
     ui->defaultRadiusEditor->setVisible(!variable || points);
-    advancedBox->setVisible(points);
+    advancedBox->setVisible(selectedEdge && points);
     ui->checkBoxUseAllEdges->setEnabled(!variable);
     ui->checkBoxUseAllEdges->setVisible(!variable);
     ui->addControlPointButton->setEnabled(points && edge);
@@ -1536,14 +1527,10 @@ void TaskFilletParameters::setAddControlPointMode(bool enabled)
     if (enabled) {
         setSelectionMode(refSel);
         Gui::Selection().clearSelection();
-        ui->activeEdgeLabel->setText(tr("Click a position on any selected edge"));
     }
     else {
         if (selectionMode == refSel) {
             setSelectionMode(none);
-        }
-        if (auto* current = ui->listWidgetReferences->currentItem()) {
-            ui->activeEdgeLabel->setText(tr("Radii for %1").arg(current->text()));
         }
     }
 }
@@ -1746,7 +1733,10 @@ void TaskFilletParameters::setupTaskPanel()
     for (auto* label : {ui->filletTypeLabel, ui->defaultRadiusLabel, ui->startRadiusLabel, ui->radiusLawLabel}) {
         label->setMinimumWidth(labelWidth);
     }
-    ui->activeEdgeLabel->setContentsMargins(0, 8, 0, 0);
+    edgeBox = new Gui::TaskView::TaskBox(QString(), true, this);
+    edgeBox->setObjectName(QStringLiteral("filletEdgeParameters"));
+    edgeBox->groupLayout()->addWidget(ui->edgeParameters);
+    ui->edgeParametersLayout->setContentsMargins(ui->verticalLayout->contentsMargins());
     connect(
         ui->radiusLaw,
         qOverload<int>(&QComboBox::currentIndexChanged),
@@ -1770,7 +1760,12 @@ void TaskFilletParameters::setupTaskPanel()
     positionUnits->setObjectName(QStringLiteral("controlPointPositionUnits"));
     positionUnits->addItems({tr("Model units"), tr("Percentage")});
     advancedLayout->addRow(tr("Control point position"), positionUnits);
+    advancedLayout->setRowWrapPolicy(QFormLayout::WrapLongRows);
+    advancedLayout->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
     advancedBox->groupLayout()->addWidget(advanced);
+    advancedBox->groupLayout()->setSizeConstraint(QLayout::SetMinimumSize);
+    // TaskBox caches the content height when initially collapsed.
+    advanced->adjustSize();
     advancedBox->hideGroupBox();
     connect(positionUnits, qOverload<int>(&QComboBox::currentIndexChanged), this, [this] {
         refreshPointTable();
@@ -2247,6 +2242,7 @@ TaskDlgFilletParameters::TaskDlgFilletParameters(ViewProviderFillet* DressUpView
     parameter = new TaskFilletParameters(DressUpView);
 
     Content.push_back(parameter);
+    Content.push_back(static_cast<TaskFilletParameters*>(parameter)->edgeBox);
     Content.push_back(static_cast<TaskFilletParameters*>(parameter)->advancedBox);
     Content.push_back(preview);
 }

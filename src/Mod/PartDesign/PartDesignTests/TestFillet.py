@@ -257,6 +257,62 @@ class TestFillet(unittest.TestCase):
                     self.assertAlmostEqual(self.Doc.getObject("Fillet").Radius.Value, 1.1)
 
     @unittest.skipUnless(FreeCAD.GuiUp, "Requires the native task panel")
+    def testEdgeTaskPanelAndAdvancedExpansion(self):
+        from PySide import QtCore, QtWidgets
+
+        _body, box, fillet = self._create_box_with_fillet()
+        box.Length, box.Width, box.Height = 30, 20, 16
+        fillet.Base = (box, ["Edge2", "Edge5"])
+        fillet.RadiusMode = 1
+        fillet.VariableRadiusData = {"Edge2": "0,1;0.4,1.5;1,1"}
+        fillet.VariableRadiusControlPointIds = {"Edge2": "cp1"}
+        self.Doc.recompute()
+        window = self._edit_fillet(fillet)
+        tree = window.findChild(QtWidgets.QTreeWidget, "treeWidgetReferences")
+        edge_panel = window.findChild(QtWidgets.QWidget, "filletEdgeParameters")
+        advanced = window.findChild(QtWidgets.QWidget, "filletAdvanced")
+        units = advanced.findChild(QtWidgets.QComboBox, "controlPointPositionUnits")
+        table = edge_panel.findChild(QtWidgets.QTableWidget, "controlPointTable")
+        header = next(b for b in advanced.findChildren(QtWidgets.QAbstractButton)
+                      if b.text() == "Advanced Properties")
+        self.assertFalse(units.isVisible())
+        for index in (1, 0):
+            tree.setCurrentItem(tree.topLevelItem(index))
+            self._settle_gui()
+            self.assertTrue(edge_panel.isVisible())
+            self.assertTrue(any(b.text() == tree.currentItem().text(0)
+                                for b in edge_panel.findChildren(QtWidgets.QAbstractButton)))
+            self.assertEqual(table.isVisible(), index == 0)
+        for _ in range(2):
+            header.click()
+            for _ in range(6):
+                self._settle_gui()
+            self.assertTrue(units.isVisible())
+            for widget in [units] + advanced.findChildren(QtWidgets.QLabel):
+                if not widget.isVisible():
+                    continue
+                parent = widget.parentWidget()
+                while parent is not advanced.parentWidget():
+                    rect = QtCore.QRect(widget.mapTo(parent, QtCore.QPoint()), widget.size())
+                    self.assertTrue(parent.rect().contains(rect), widget.objectName())
+                    parent = parent.parentWidget()
+            header.click()
+            for _ in range(6):
+                self._settle_gui()
+            self.assertFalse(units.isVisible())
+        tree.clearSelection()
+        self._settle_gui()
+        self.assertFalse(edge_panel.isVisible())
+        self.assertFalse(advanced.isVisible())
+        tree.setCurrentItem(tree.topLevelItem(0))
+        self._settle_gui()
+        self.assertTrue(edge_panel.isVisible())
+        window.findChild(QtWidgets.QComboBox, "filletType").setCurrentIndex(0)
+        self._settle_gui()
+        self.assertFalse(edge_panel.isVisible())
+        self.assertTrue(fillet.isValid())
+
+    @unittest.skipUnless(FreeCAD.GuiUp, "Requires the native task panel")
     def testPositionEditorsFollowUpstreamEdgeLength(self):
         from PySide import QtWidgets
 
@@ -337,6 +393,9 @@ class TestFillet(unittest.TestCase):
                     if model.index(i, 0).data() == "Face1"
                 )
                 tree.setCurrentIndex(face1)
+                self._settle_gui()
+                edge_panel = window.findChild(QtWidgets.QWidget, "filletEdgeParameters")
+                self.assertFalse(edge_panel.isVisible())
                 remove = window.findChild(QtWidgets.QToolButton, "removeGeometry")
                 remove.click()
                 self._settle_gui()
@@ -354,6 +413,8 @@ class TestFillet(unittest.TestCase):
                     if model.index(i, 0, face3).data() == "Edge1"
                 )
                 tree.setCurrentIndex(edge1)
+                self._settle_gui()
+                self.assertEqual(edge_panel.isVisible(), mode == 1)
                 remove.click()
                 self._settle_gui()
                 # Explicitly deleting the edge removes it from the retained face and Base.
