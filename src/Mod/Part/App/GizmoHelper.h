@@ -67,6 +67,10 @@ struct PartExport DraggerPlacementProps
 DraggerPlacementProps PartExport
 getDraggerPlacementFromEdgeAndFace(Part::TopoShape& edge, TopoDS_Face& face);
 
+// Evaluate the same placement at a parameter of the edge's underlying curve.
+DraggerPlacementProps PartExport
+getDraggerPlacementFromEdgeAndFace(Part::TopoShape& edge, TopoDS_Face& face, double parameter);
+
 DraggerPlacementProps PartExport
 getDraggerPlacementFromEdgeAndFace(Part::TopoShape& edge, Part::TopoShape& face);
 

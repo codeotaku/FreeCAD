@@ -23,8 +23,11 @@
 
 #include "GizmoHelper.h"
 
+#include <algorithm>
+#include <optional>
 #include <utility>
 
+#include <BRepAdaptor_Curve.hxx>
 #include <BOPTools_AlgoTools3D.hxx>
 #include <BRep_Tool.hxx>
 #include <BRepGProp.hxx>
@@ -44,12 +47,12 @@
 #include <Mod/Part/App/Tools.h>
 
 
-EdgeMidPointProps getEdgeMidPointProps(Part::TopoShape& edge)
+static EdgeMidPointProps getEdgePointProps(Part::TopoShape& edge, std::optional<double> parameter)
 {
     double u1, u2;
     TopoDS_Edge TDSEdge = TopoDS::Edge(edge.getShape());
     Handle(Geom_Curve) curve = BRep_Tool::Curve(TDSEdge, u1, u2);
-    double middle = (u1 + u2) / 2.0;
+    double middle = parameter.value_or((u1 + u2) / 2.0);
 
     gp_Pnt pos;
     gp_Vec derivative;
@@ -64,6 +67,11 @@ EdgeMidPointProps getEdgeMidPointProps(Part::TopoShape& edge)
     }
 
     return {position, tangent, middle};
+}
+
+EdgeMidPointProps getEdgeMidPointProps(Part::TopoShape& edge)
+{
+    return getEdgePointProps(edge, std::nullopt);
 }
 
 Base::Vector3d getCentreOfMassFromFace(TopoDS_Face& face)
@@ -141,9 +149,13 @@ std::pair<TopoDS_Face, TopoDS_Face> getAdjacentFacesFromEdge(
     return {face1, face2};
 }
 
-DraggerPlacementProps getDraggerPlacementFromEdgeAndFace(Part::TopoShape& edge, TopoDS_Face& face)
+static DraggerPlacementProps getDraggerPlacementFromEdgePointAndFace(
+    Part::TopoShape& edge,
+    TopoDS_Face& face,
+    const EdgeMidPointProps& edgePoint
+)
 {
-    auto [position, tangent, middle] = getEdgeMidPointProps(edge);
+    auto [position, tangent, middle] = edgePoint;
 
     Base::Vector3d normal;
     Base::Vector3d inwardPoint;
@@ -174,6 +186,41 @@ DraggerPlacementProps getDraggerPlacementFromEdgeAndFace(Part::TopoShape& edge, 
     }
 
     return {position, dir};
+}
+
+DraggerPlacementProps getDraggerPlacementFromEdgeAndFace(Part::TopoShape& edge, TopoDS_Face& face)
+{
+    return getDraggerPlacementFromEdgePointAndFace(edge, face, getEdgeMidPointProps(edge));
+}
+
+DraggerPlacementProps getDraggerPlacementFromEdgeAndFace(
+    Part::TopoShape& edge,
+    TopoDS_Face& face,
+    double parameter
+)
+{
+    auto placement = getDraggerPlacementFromEdgePointAndFace(
+        edge, face, getEdgePointProps(edge, parameter)
+    );
+    BRepAdaptor_Curve curve(TopoDS::Edge(edge.getShape()));
+    const double inset = std::min(
+        curve.Resolution(10 * Precision::Confusion()),
+        (curve.LastParameter() - curve.FirstParameter()) / 4
+    );
+    const double interior = std::clamp(
+        parameter, curve.FirstParameter() + inset, curve.LastParameter() - inset
+    );
+    if (interior != parameter) {
+        // At a vertex, PointNearEdge may step beyond a different face boundary.
+        // Use the adjacent interior direction to orient the exact endpoint frame.
+        const auto adjacent = getDraggerPlacementFromEdgePointAndFace(
+            edge, face, getEdgePointProps(edge, interior)
+        );
+        if (placement.dir.Dot(adjacent.dir) < 0) {
+            placement.dir = -placement.dir;
+        }
+    }
+    return placement;
 }
 
 DraggerPlacementProps getDraggerPlacementFromEdgeAndFace(Part::TopoShape& edge, Part::TopoShape& face)

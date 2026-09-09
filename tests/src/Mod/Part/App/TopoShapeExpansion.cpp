@@ -4,6 +4,9 @@
 #include <gtest/gtest.h>
 #include "src/App/InitApplication.h"
 #include <Mod/Part/App/TopoShape.h>
+#include <Mod/Part/App/GizmoHelper.h>
+#include <Mod/Part/App/Tools.h>
+#include <Base/Converter.h>
 #include "Mod/Part/App/TopoShapeMapper.h"
 #include <Mod/Part/App/TopoShapeOpCode.h>
 
@@ -11,6 +14,7 @@
 
 #include <boost/core/ignore_unused.hpp>
 #include <BRepAdaptor_CompCurve.hxx>
+#include <BRepAdaptor_Curve.hxx>
 #include <BRepAdaptor_Surface.hxx>
 #include <BRepBuilderAPI_MakeVertex.hxx>
 #include <BRepBuilderAPI_MakeEdge.hxx>
@@ -18,11 +22,13 @@
 #include <BRepBuilderAPI_MakeWire.hxx>
 #include <BRepBuilderAPI_Transform.hxx>
 #include <limits>
+#include <numbers>
 
 #include <BRepFeat_SplitShape.hxx>
 #include <BRepOffsetAPI_MakeEvolved.hxx>
 #include <BRepPrimAPI_MakeBox.hxx>
 #include <BRepPrimAPI_MakeCylinder.hxx>
+#include <BRepPrimAPI_MakeCone.hxx>
 #include <BRepAlgoAPI_Fuse.hxx>
 #include <GeomAPI_PointsToBSpline.hxx>
 #include <Geom_BezierCurve.hxx>
@@ -82,6 +88,55 @@ TEST_F(TopoShapeExpansionTest, makeElementFilletSupportsVariableRadiusLaw)
 
     EXPECT_FALSE(result.isNull());
     EXPECT_TRUE(result.hasSubShape(TopAbs_SOLID));
+}
+
+TEST_F(TopoShapeExpansionTest, FilletPlacementFollowsCurvedEdge)
+{
+    TopoShape source {BRepPrimAPI_MakeCone(20.0, 10.0, 10.0, std::numbers::pi / 2).Shape()};
+    int circles = 0;
+    for (auto edge : source.getSubTopoShapes(TopAbs_EDGE)) {
+        BRepAdaptor_Curve curve(TopoDS::Edge(edge.getShape()));
+        if (curve.GetType() != GeomAbs_Circle) {
+            continue;
+        }
+        ++circles;
+        auto [face1, face2] = getAdjacentFacesFromEdge(edge, source);
+        for (auto face : {face1, face2}) {
+            const auto middle = getEdgeMidPointProps(edge);
+            const auto original = getDraggerPlacementFromEdgeAndFace(edge, face);
+            for (double fraction : {0.0, 0.25, 0.75, 1.0}) {
+                const double parameter = curve.FirstParameter()
+                    + fraction * (curve.LastParameter() - curve.FirstParameter());
+                const auto placement = getDraggerPlacementFromEdgeAndFace(edge, face, parameter);
+                gp_Trsf rotation;
+                rotation.SetRotation(curve.Circle().Axis(), parameter - middle.middle);
+                auto expected = Base::convertTo<gp_Vec>(original.dir);
+                expected.Transform(rotation);
+                EXPECT_LT(
+                    (placement.dir - Base::convertTo<Base::Vector3d>(expected)).Length(), 1e-6
+                );
+                const auto position = Base::convertTo<Base::Vector3d>(curve.Value(parameter));
+                EXPECT_LT((placement.position - position).Length(), 1e-7);
+            }
+        }
+    }
+    EXPECT_EQ(circles, 2);
+}
+
+TEST_F(TopoShapeExpansionTest, FilletPlacementPreservesStraightEdgeDirection)
+{
+    TopoShape source {BRepPrimAPI_MakeBox(10.0, 20.0, 30.0).Shape()};
+    for (auto edge : source.getSubTopoShapes(TopAbs_EDGE)) {
+        BRepAdaptor_Curve curve(TopoDS::Edge(edge.getShape()));
+        auto [face1, face2] = getAdjacentFacesFromEdge(edge, source);
+        for (auto face : {face1, face2}) {
+            const auto original = getDraggerPlacementFromEdgeAndFace(edge, face);
+            for (double parameter : {curve.FirstParameter(), curve.LastParameter()}) {
+                const auto placement = getDraggerPlacementFromEdgeAndFace(edge, face, parameter);
+                EXPECT_LT((placement.dir - original.dir).Length(), 1e-7);
+            }
+        }
+    }
 }
 
 TEST_F(TopoShapeExpansionTest, makeElementFilletRejectsInvalidVariableRadiusLaw)

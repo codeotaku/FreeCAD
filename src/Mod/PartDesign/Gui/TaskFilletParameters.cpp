@@ -158,23 +158,31 @@ struct EdgePointFrame
     Base::Vector3d position;
     Base::Vector3d tangent;
     double length;
+    double parameter;
 };
 
 struct RadiusDraggerFrame
 {
     DraggerPlacementProps first;
-    DraggerPlacementProps second;
     double correction;
 };
 
-RadiusDraggerFrame radiusDraggerFrame(Part::TopoShape& edge, Part::TopoShape& baseShape)
+RadiusDraggerFrame radiusDraggerFrame(
+    Part::TopoShape& edge,
+    Part::TopoShape& baseShape,
+    std::optional<double> parameter = std::nullopt
+)
 {
     auto [face1, face2] = getAdjacentFacesFromEdge(edge, baseShape);
-    const auto first = getDraggerPlacementFromEdgeAndFace(edge, face1);
-    const auto second = getDraggerPlacementFromEdgeAndFace(edge, face2);
+    const auto placement = [&](TopoDS_Face& face) {
+        return parameter ? getDraggerPlacementFromEdgeAndFace(edge, face, *parameter)
+                         : getDraggerPlacementFromEdgeAndFace(edge, face);
+    };
+    const auto first = placement(face1);
+    const auto second = placement(face2);
     // Convert radius to drag distance when the adjacent faces are not orthogonal.
     const double tangent = std::tan(first.dir.GetAngle(second.dir) / 2.0);
-    return {first, second, std::abs(tangent) > Precision::Angular() ? 1.0 / tangent : 1.0};
+    return {first, std::abs(tangent) > Precision::Angular() ? 1.0 / tangent : 1.0};
 }
 
 std::optional<EdgePointFrame> evaluateEdgePosition(const TopoDS_Edge& edge, double position)
@@ -211,7 +219,8 @@ std::optional<EdgePointFrame> evaluateEdgePosition(const TopoDS_Edge& edge, doub
     return EdgePointFrame {
         Base::Vector3d(point.X(), point.Y(), point.Z()),
         Base::Vector3d(tangent.X(), tangent.Y(), tangent.Z()),
-        length
+        length,
+        parameter
     };
 }
 
@@ -1368,8 +1377,13 @@ void TaskFilletParameters::setGizmoPositions()
     auto edge = *selected;
     gizmoContainer->visible = true;
 
-    auto [props1, props2, correction] = radiusDraggerFrame(edge, baseShape);
-
+    const auto placeRadius = [&](Gui::LinearGizmo* gizmo,
+                                 Part::TopoShape& selectedEdge,
+                                 const EdgePointFrame& point) {
+        const auto frame = radiusDraggerFrame(selectedEdge, baseShape, point.parameter);
+        gizmo->Gizmo::setDraggerPlacement(point.position, frame.first.dir);
+        gizmo->setMultFactor(frame.correction);
+    };
     if (isVariableRadius()) {
         // Use the same spine parameterization for endpoint and control-point gizmos.
         const auto start = evaluateEdgePosition(TopoDS::Edge(edge.getShape()), 0.0);
@@ -1379,21 +1393,18 @@ void TaskFilletParameters::setGizmoPositions()
             return;
         }
 
-        props1.position = start->position;
-        props2.position = end->position;
+        placeRadius(radiusGizmo, edge, *start);
+        placeRadius(radiusGizmo2, edge, *end);
         if (startPointGizmo && endPointGizmo) {
             startPointGizmo->Gizmo::setDraggerPlacement(start->position, start->tangent);
             endPointGizmo->Gizmo::setDraggerPlacement(end->position, end->tangent);
         }
     }
-
-    radiusGizmo->Gizmo::setDraggerPlacement(props1.position, props1.dir);
-    if (isVariableRadius()) {
-        radiusGizmo2->Gizmo::setDraggerPlacement(props2.position, props1.dir);
+    else {
+        const auto frame = radiusDraggerFrame(edge, baseShape);
+        radiusGizmo->Gizmo::setDraggerPlacement(frame.first.position, frame.first.dir);
+        radiusGizmo->setMultFactor(frame.correction);
     }
-
-    radiusGizmo->setMultFactor(correction);
-    radiusGizmo2->setMultFactor(correction);
 
     for (auto& gizmo : controlPointGizmos) {
         const auto selectedEdge = edgeShape(gizmo.edgeName);
@@ -1419,9 +1430,7 @@ void TaskFilletParameters::setGizmoPositions()
             continue;
         }
 
-        const auto radiusFrame = radiusDraggerFrame(controlEdge, baseShape);
-        gizmo.radius->Gizmo::setDraggerPlacement(frame->position, radiusFrame.first.dir);
-        gizmo.radius->setMultFactor(radiusFrame.correction);
+        placeRadius(gizmo.radius, controlEdge, *frame);
         gizmo.radius->setVisibility(isVariableRadius());
 
         if (!gizmo.position->isDragging()) {

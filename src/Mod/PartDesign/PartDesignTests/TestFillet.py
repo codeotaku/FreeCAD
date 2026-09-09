@@ -22,7 +22,7 @@
 # ***************************************************************************
 
 from __future__ import division
-from math import pi
+from math import pi, cos, sin, sqrt, tan
 import unittest
 import os
 import tempfile
@@ -255,6 +255,66 @@ class TestFillet(unittest.TestCase):
                     self.Doc.recompute()
                     self.assertTrue(self.Doc.getObject("Fillet").isValid())
                     self.assertAlmostEqual(self.Doc.getObject("Fillet").Radius.Value, 1.1)
+
+    @unittest.skipUnless(FreeCAD.GuiUp, "Requires the native task panel")
+    def testRadiusArrowsFollowCurvedEdgeControlPoints(self):
+        import FreeCADGui as Gui
+        import Part
+        from pivy import coin
+        from PySide import QtWidgets
+
+        preferences = FreeCAD.ParamGet("User parameter:BaseApp/Preferences/Gui/Gizmos")
+        enabled = preferences.GetBool("EnableGizmos", True)
+        self.addCleanup(preferences.SetBool, "EnableGizmos", enabled)
+        preferences.SetBool("EnableGizmos", True)
+        body = self.Doc.addObject("PartDesign::Body", "Body")
+        base = body.newObject("PartDesign::Feature", "Cone")
+        base.Shape = Part.makeCone(20, 10, 10, FreeCAD.Vector(), FreeCAD.Vector(0, 0, 1), 90)
+        name, edge = next(("Edge" + str(i + 1), edge)
+                          for i, edge in enumerate(base.Shape.Edges)
+                          if isinstance(edge.Curve, Part.Circle)
+                          and all(abs(v.Point.z - 10) < 1e-7 for v in edge.Vertexes))
+        fillet = body.newObject("PartDesign::Fillet", "Fillet")
+        fillet.Base = (base, [name])
+        fillet.RadiusMode = 1
+        fillet.Radius = 0.5
+        fillet.VariableRadiusData = {name: "0,0.5;0.4,0.8;1,0.5"}
+        fillet.VariableRadiusControlPointIds = {name: "cp1"}
+        self.Doc.recompute()
+        self.assertTrue(fillet.isValid())
+        window = self._edit_fillet(fillet)
+        table = window.findChild(QtWidgets.QTableWidget, "controlPointTable")
+        previous_search = coin.SoBaseKit.isSearchingChildren()
+        coin.SoBaseKit.setSearchingChildren(True)
+        try:
+            for fraction in (0.4, 0.7):
+                table.cellWidget(1, 1).setProperty("rawValue", fraction * edge.Length)
+                self._settle_gui()
+                # The native quantity editor rounds to the configured display precision.
+                actual_fraction = table.cellWidget(1, 1).property("rawValue") / edge.Length
+                search = coin.SoSearchAction()
+                search.setName(coin.SbName("filletRadiusHandle"))
+                search.setInterest(coin.SoSearchAction.ALL)
+                search.setSearchingAll(True)
+                search.apply(Gui.activeDocument().activeView().getSceneGraph())
+                self.assertEqual(search.getPaths().getLength(), 3)
+                for index, position in enumerate((0, 1, actual_fraction)):
+                    path = coin.SoFullPath.fromSoPath(search.getPaths()[index])
+                    container = next(path.getNode(i) for i in range(path.getLength())
+                                     if path.getNode(i).getTypeId().getName().getString()
+                                     == "SoLinearDraggerContainer")
+                    rotation = container.getField("rotation").getValue()
+                    direction = rotation.multVec(coin.SbVec3f(0, 1, 0))
+                    angle = (edge.FirstParameter
+                             + position * (edge.LastParameter - edge.FirstParameter))
+                    expected = FreeCAD.Vector(cos(angle), sin(angle), -1) / sqrt(2)
+                    self.assertLess((FreeCAD.Vector(*direction.getValue()) - expected).Length, 1e-6)
+                    radius = 0.8 if index == 2 else 0.5
+                    distance = path.getTail().getField("translation").getValue()[1]
+                    self.assertAlmostEqual(distance, radius / tan(3 * pi / 8), places=6)
+                self.assertTrue(fillet.isValid())
+        finally:
+            coin.SoBaseKit.setSearchingChildren(previous_search)
 
     @unittest.skipUnless(FreeCAD.GuiUp, "Requires the native task panel")
     def testEdgeTaskPanelAndAdvancedExpansion(self):
